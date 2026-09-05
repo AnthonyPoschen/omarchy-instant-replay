@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.anthonyposchen.shadowplay",
+  "name": "ShadowPlay",
+  "version": "0.1.0",
+  "author": "Anthony Poschen",
+  "license": "MIT",
+  "description": "Always-on GPU instant replay for Omarchy: buffer a monitor and save the last N seconds with a hotkey.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "ShadowPlay",
+    "description": "Buffer a monitor and save the last N seconds of gameplay.",
+    "category": "Capture",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "monitor": "",
+      "seconds": 60,
+      "audio": "desktop",
+      "autostart": false
+    },
+    "schema": [
+      {
+        "key": "monitor",
+        "type": "string",
+        "label": "Monitor",
+        "description": "Leave empty to capture whichever monitor is focused when the buffer starts.",
+        "defaultValue": ""
+      },
+      {
+        "key": "seconds",
+        "type": "integer",
+        "label": "Replay length (seconds)",
+        "min": 15,
+        "max": 600,
+        "step": 15,
+        "defaultValue": 60
+      },
+      {
+        "key": "audio",
+        "type": "enum",
+        "label": "Audio",
+        "options": ["none", "desktop", "both"],
+        "defaultValue": "desktop",
+        "description": "none records video only. desktop is system audio. both mixes system audio and the microphone."
+      },
+      {
+        "key": "autostart",
+        "type": "boolean",
+        "label": "Start buffer with the bar",
+        "defaultValue": false
+      }
+    ]
+  }
+}

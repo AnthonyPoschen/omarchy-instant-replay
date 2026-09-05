@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+FAKE_DIR="${SHADOWPLAY_FAKE_DIR:?SHADOWPLAY_FAKE_DIR is not set}"
+mkdir -p "$FAKE_DIR"
+
+ipc=""
+command=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+  -ipc)
+    ipc="${2:-}"
+    shift 2
+    ;;
+  *)
+    command+=("$1")
+    shift
+    ;;
+  esac
+done
+
+[[ -n $ipc ]] || { echo "missing -ipc" >&2; exit 1; }
+printf '%s\n' "$ipc" > "$FAKE_DIR/last-ipc"
+printf '%s\n' "${command[*]}" > "$FAKE_DIR/last-cli"
+
+case "${command[0]:-}" in
+status)
+  if [[ -e $FAKE_DIR/running ]]; then
+    echo running
+    exit 0
+  fi
+  echo "not running"
+  exit 1
+  ;;
+stop)
+  rm -f "$FAKE_DIR/running"
+  exit 0
+  ;;
+save-replay)
+  clip="$FAKE_DIR/replay.mp4"
+  : > "$clip"
+  if [[ -n ${command[1]:-} ]]; then
+    printf '%s\n' "${command[1]}" > "$FAKE_DIR/saved-seconds"
+  else
+    rm -f "$FAKE_DIR/saved-seconds"
+  fi
+  printf '%s\n' "$clip"
+  ;;
+*)
+  echo "unknown command: ${command[0]:-}" >&2
+  exit 1
+  ;;
+esac

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+FAKE_DIR="${SHADOWPLAY_FAKE_DIR:?SHADOWPLAY_FAKE_DIR is not set}"
+mkdir -p "$FAKE_DIR"
+
+if [[ ${1:-} == --list-monitors ]]; then
+  printf 'HDMI-A-1|3440x1440\n'
+  printf 'DP-1|5120x1440\n'
+  exit 0
+fi
+
+if [[ ${1:-} == --version ]]; then
+  printf 'fake-gsr 0.0.0\n'
+  exit 0
+fi
+
+printf '%s\n' "$@" > "$FAKE_DIR/gsr.args"
+echo "$$" > "$FAKE_DIR/gsr.pid"
+: > "$FAKE_DIR/running"
+
+# Keep the same lifetime as a real recorder: survive until SIGINT/SIGTERM.
+trap 'rm -f "$FAKE_DIR/running"; exit 0' INT TERM
+while [[ -e $FAKE_DIR/running ]]; do
+  sleep 0.05
+done

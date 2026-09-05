@@ -1,0 +1,639 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROGRAM="omarchy-shadowplay"
+PROCESS_NAME="omarchy-shadowplay-gsr"
+VERSION="0.1.0"
+
+HOME="${HOME:?HOME is not set}"
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+CONFIG_DIR="$CONFIG_HOME/omarchy-shadowplay"
+STATE_DIR="$STATE_HOME/omarchy-shadowplay"
+CONFIG_FILE="$CONFIG_DIR/config"
+PID_FILE="$STATE_DIR/recorder.pid"
+ACTIVITY_FILE="$STATE_DIR/activity"
+LOG_FILE="$STATE_DIR/gsr.log"
+
+GSR_BIN="${SHADOWPLAY_GSR_BIN:-gpu-screen-recorder}"
+GSR_CLI_BIN="${SHADOWPLAY_GSR_CLI_BIN:-gsr-cli}"
+FOCUSED_MONITOR_BIN="${SHADOWPLAY_FOCUSED_MONITOR_BIN:-omarchy-hyprland-monitor-focused}"
+
+DEFAULT_SECONDS=60
+DEFAULT_AUDIO="desktop"
+MIN_SECONDS=15
+MAX_SECONDS=600
+
+CONFIG_MONITOR=""
+CONFIG_SECONDS="$DEFAULT_SECONDS"
+CONFIG_AUDIO="$DEFAULT_AUDIO"
+
+runtime_base() {
+  local candidate="${XDG_RUNTIME_DIR:-}"
+  if [[ -n $candidate && -d $candidate && -w $candidate && -O $candidate ]]; then
+    printf '%s\n' "$candidate"
+    return
+  fi
+
+  candidate="${TMPDIR:-/tmp}/omarchy-shadowplay-runtime-$(id -u)"
+  if [[ -L $candidate ]]; then
+    die "unsafe runtime path is a symbolic link: $candidate"
+  fi
+  if [[ -e $candidate && ! -d $candidate ]]; then
+    die "unsafe runtime path is not a directory: $candidate"
+  fi
+  if [[ -d $candidate && ! -O $candidate ]]; then
+    die "unsafe runtime path is owned by another user: $candidate"
+  fi
+  (umask 077; mkdir -p "$candidate")
+  chmod 700 "$candidate"
+  printf '%s\n' "$candidate"
+}
+
+RUNTIME_BASE="$(runtime_base)"
+RUNTIME_DIR="$RUNTIME_BASE/omarchy-shadowplay"
+IPC="$RUNTIME_DIR/gsr.sock"
+(umask 077; mkdir -p "$RUNTIME_DIR" "$STATE_DIR" "$CONFIG_DIR")
+chmod 700 "$RUNTIME_DIR" "$STATE_DIR" "$CONFIG_DIR"
+
+usage() {
+  cat <<USAGE
+Usage:
+  $PROGRAM start
+  $PROGRAM stop
+  $PROGRAM save [seconds]
+  $PROGRAM status [--json]
+  $PROGRAM monitors [--json]
+  $PROGRAM settings show [--json]
+  $PROGRAM settings set monitor <name|>
+  $PROGRAM settings set seconds <15-600>
+  $PROGRAM settings set audio <none|desktop|both>
+  $PROGRAM doctor
+  $PROGRAM --help
+  $PROGRAM --version
+
+Start a GPU Screen Recorder instant-replay buffer on one monitor, then save
+the last N seconds without stopping the buffer.
+
+An empty monitor setting captures whichever monitor is focused when start runs.
+Changing the monitor later restarts the buffer.
+
+This process is launched as $PROCESS_NAME so Omarchy's stock screen recorder
+does not treat it as a session recording. Only one KMS capture can run at a
+time, so stock omarchy screenrecord may fail while the buffer is active.
+USAGE
+}
+
+die() {
+  printf '%s: %s\n' "$PROGRAM" "$1" >&2
+  exit 1
+}
+
+die_usage() {
+  printf '%s: %s\n' "$PROGRAM" "$1" >&2
+  printf "Try '%s --help' for usage.\n" "$PROGRAM" >&2
+  exit 2
+}
+
+json_escape() {
+  local value="$1"
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  value=${value//$'\n'/\\n}
+  value=${value//$'\r'/\\r}
+  value=${value//$'\t'/\\t}
+  printf '%s' "$value"
+}
+
+json_string() {
+  printf '"%s"' "$(json_escape "$1")"
+}
+
+json_string_or_null() {
+  if [[ -n ${1:-} ]]; then
+    json_string "$1"
+  else
+    printf 'null'
+  fi
+}
+
+json_bool() {
+  if [[ $1 == true ]]; then
+    printf 'true'
+  else
+    printf 'false'
+  fi
+}
+
+config_value_safe() {
+  [[ $1 != *$'\n'* && $1 != *$'\r'* ]]
+}
+
+notify() {
+  local title="$1"
+  local body="${2:-}"
+  [[ ${SHADOWPLAY_NOTIFY:-true} == true ]] || return 0
+  if command -v omarchy-notification-send >/dev/null 2>&1; then
+    if [[ -n $body ]]; then
+      omarchy-notification-send "$title" "$body" || true
+    else
+      omarchy-notification-send "$title" || true
+    fi
+    return
+  fi
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send "$title" "$body" || true
+  fi
+}
+
+load_config() {
+  local key value
+  CONFIG_MONITOR=""
+  CONFIG_SECONDS="$DEFAULT_SECONDS"
+  CONFIG_AUDIO="$DEFAULT_AUDIO"
+
+  [[ -r $CONFIG_FILE ]] || return 0
+  while IFS='=' read -r key value || [[ -n ${key:-} ]]; do
+    [[ -n ${key:-} && $key != \#* ]] || continue
+    case "$key" in
+    monitor) CONFIG_MONITOR="$value" ;;
+    seconds)
+      [[ $value =~ ^[0-9]+$ ]] && CONFIG_SECONDS="$value"
+      ;;
+    audio)
+      [[ $value == none || $value == desktop || $value == both ]] && CONFIG_AUDIO="$value"
+      ;;
+    esac
+  done < "$CONFIG_FILE"
+  clamp_seconds
+}
+
+clamp_seconds() {
+  if (( CONFIG_SECONDS < MIN_SECONDS )); then
+    CONFIG_SECONDS=$MIN_SECONDS
+  elif (( CONFIG_SECONDS > MAX_SECONDS )); then
+    CONFIG_SECONDS=$MAX_SECONDS
+  fi
+}
+
+write_config() {
+  config_value_safe "$CONFIG_MONITOR" || die "monitor value contains a newline"
+  mkdir -p "$CONFIG_DIR"
+  chmod 700 "$CONFIG_DIR" 2>/dev/null || true
+  local tmp="$CONFIG_DIR/.config.$$"
+  (umask 077
+    {
+      printf '# omarchy-shadowplay configuration v1\n'
+      printf 'monitor=%s\n' "$CONFIG_MONITOR"
+      printf 'seconds=%s\n' "$CONFIG_SECONDS"
+      printf 'audio=%s\n' "$CONFIG_AUDIO"
+    } > "$tmp"
+  )
+  mv -f "$tmp" "$CONFIG_FILE"
+}
+
+output_dir() {
+  local dir="${SHADOWPLAY_OUTPUT_DIR:-}"
+  if [[ -z $dir ]]; then
+    if [[ -n ${OMARCHY_SCREENRECORD_DIR:-} ]]; then
+      dir="$OMARCHY_SCREENRECORD_DIR/Replays"
+    elif [[ -n ${XDG_VIDEOS_DIR:-} ]]; then
+      dir="$XDG_VIDEOS_DIR/Replays"
+    elif [[ -f $HOME/.config/user-dirs.dirs ]]; then
+      # shellcheck disable=SC1090
+      source "$HOME/.config/user-dirs.dirs"
+      dir="${XDG_VIDEOS_DIR:-$HOME/Videos}/Replays"
+    else
+      dir="$HOME/Videos/Replays"
+    fi
+  fi
+  printf '%s\n' "$dir"
+}
+
+pid_alive() {
+  local pid="$1"
+  [[ $pid =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+read_pid() {
+  local pid=""
+  [[ -r $PID_FILE ]] || return 1
+  pid=$(<"$PID_FILE")
+  pid_alive "$pid" || return 1
+  printf '%s\n' "$pid"
+}
+
+cli_running() {
+  "$GSR_CLI_BIN" -ipc "$IPC" status >/dev/null 2>&1
+}
+
+buffer_running() {
+  local pid=""
+  pid=$(read_pid 2>/dev/null || true)
+  if [[ -n $pid ]] && cli_running; then
+    return 0
+  fi
+  if [[ -n $pid ]] && ! cli_running; then
+    return 1
+  fi
+  cli_running
+}
+
+list_monitor_lines() {
+  "$GSR_BIN" --list-monitors 2>/dev/null || true
+}
+
+list_monitor_names() {
+  list_monitor_lines | awk -F'|' 'NF { print $1 }'
+}
+
+focused_monitor() {
+  if [[ -n ${SHADOWPLAY_FOCUSED_MONITOR:-} ]]; then
+    printf '%s\n' "$SHADOWPLAY_FOCUSED_MONITOR"
+    return
+  fi
+  if command -v "$FOCUSED_MONITOR_BIN" >/dev/null 2>&1; then
+    "$FOCUSED_MONITOR_BIN"
+    return
+  fi
+  list_monitor_names | head -n 1
+}
+
+resolve_monitor() {
+  local requested="$CONFIG_MONITOR"
+  local names name found="false"
+  names=$(list_monitor_names)
+  [[ -n $names ]] || die "no capture monitors were reported by $GSR_BIN"
+  if [[ -z $requested ]]; then
+    requested=$(focused_monitor)
+    [[ -n $requested ]] || die "could not determine the focused monitor"
+  fi
+  while IFS= read -r name; do
+    if [[ $name == "$requested" ]]; then
+      found="true"
+      break
+    fi
+  done <<<"$names"
+  [[ $found == true ]] || die "monitor is not available: $requested"
+  printf '%s\n' "$requested"
+}
+
+activity_value() {
+  local key="$1"
+  local found=""
+  [[ -r $ACTIVITY_FILE ]] || return 0
+  found=$(awk -F= -v k="$key" '$1==k { print substr($0, index($0, "=")+1); exit }' "$ACTIVITY_FILE")
+  printf '%s' "$found"
+}
+
+write_activity() {
+  local running="$1" monitor="$2" seconds="$3" audio="$4" last_clip="${5:-}"
+  local tmp="$STATE_DIR/.activity.$$"
+  (umask 077
+    {
+      printf 'running=%s\n' "$running"
+      printf 'monitor=%s\n' "$monitor"
+      printf 'seconds=%s\n' "$seconds"
+      printf 'audio=%s\n' "$audio"
+      printf 'last_clip=%s\n' "$last_clip"
+    } > "$tmp"
+  )
+  mv -f "$tmp" "$ACTIVITY_FILE"
+}
+
+wait_until_running() {
+  local pid="$1"
+  local i
+  for ((i = 0; i < 50; i++)); do
+    if ! pid_alive "$pid"; then
+      return 1
+    fi
+    if cli_running; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_until_stopped() {
+  local pid="${1:-}"
+  local i
+  for ((i = 0; i < 50; i++)); do
+    if [[ -n $pid ]] && pid_alive "$pid"; then
+      sleep 0.1
+      continue
+    fi
+    if cli_running; then
+      sleep 0.1
+      continue
+    fi
+    return 0
+  done
+  return 1
+}
+
+apply_start_flags() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+    --monitor=*) CONFIG_MONITOR="${arg#--monitor=}" ;;
+    --seconds=*)
+      local value="${arg#--seconds=}"
+      [[ $value =~ ^[0-9]+$ ]] || die "seconds must be an integer"
+      CONFIG_SECONDS="$value"
+      clamp_seconds
+      [[ $CONFIG_SECONDS == "$value" ]] || die "seconds must be between $MIN_SECONDS and $MAX_SECONDS"
+      ;;
+    --audio=*)
+      local value="${arg#--audio=}"
+      [[ $value == none || $value == desktop || $value == both ]] || die "audio must be none, desktop, or both"
+      CONFIG_AUDIO="$value"
+      ;;
+    "") ;;
+    *) die_usage "unknown start option: $arg" ;;
+    esac
+  done
+}
+
+cmd_start() {
+  load_config
+  apply_start_flags "$@"
+  write_config
+  if buffer_running; then
+    cmd_status
+    return 0
+  fi
+  command -v "$GSR_BIN" >/dev/null 2>&1 || die "gpu-screen-recorder is not installed"
+  command -v "$GSR_CLI_BIN" >/dev/null 2>&1 || die "gsr-cli is not installed"
+
+  local monitor seconds audio out dir
+  monitor=$(resolve_monitor)
+  seconds=$CONFIG_SECONDS
+  audio=$CONFIG_AUDIO
+  dir=$(output_dir)
+  mkdir -p "$dir"
+
+  local -a gsr_args=(
+    -w "$monitor"
+    -f 60
+    -fm cfr
+    -k auto
+    -bm cbr
+    -q 40000
+    -r "$seconds"
+    -replay-storage ram
+    -fallback-cpu-encoding yes
+    -ipc "$IPC"
+    -o "$dir"
+  )
+  case "$audio" in
+  desktop) gsr_args+=(-a default_output -ac aac) ;;
+  both) gsr_args+=(-a "default_output|default_input" -ac aac) ;;
+  none) ;;
+  *) die "invalid audio setting: $audio" ;;
+  esac
+
+  rm -f "$IPC"
+  mkdir -p "$STATE_DIR"
+  : > "$LOG_FILE"
+  bash -c 'exec -a omarchy-shadowplay-gsr "$0" "$@"' "$GSR_BIN" "${gsr_args[@]}" >>"$LOG_FILE" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$PID_FILE"
+
+  if ! wait_until_running "$pid"; then
+    local log
+    log=$(tail -n 20 "$LOG_FILE" 2>/dev/null || true)
+    rm -f "$PID_FILE"
+    if [[ -n $log ]]; then
+      die "replay buffer failed to start"$'\n'"$log"
+    fi
+    die "replay buffer failed to start"
+  fi
+
+  write_activity true "$monitor" "$seconds" "$audio" "$(activity_value last_clip)"
+  notify "Replay buffer running" "$monitor · last ${seconds}s"
+  cmd_status
+}
+
+cmd_stop() {
+  local pid=""
+  pid=$(read_pid 2>/dev/null || true)
+  if [[ -z $pid ]] && ! cli_running; then
+    rm -f "$PID_FILE"
+    write_activity false "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$(activity_value last_clip)"
+    return 0
+  fi
+
+  if cli_running; then
+    "$GSR_CLI_BIN" -ipc "$IPC" stop >/dev/null 2>&1 || true
+  fi
+  if [[ -n $pid ]] && pid_alive "$pid"; then
+    kill -INT "$pid" 2>/dev/null || true
+  fi
+  if ! wait_until_stopped "$pid"; then
+    if [[ -n $pid ]] && pid_alive "$pid"; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$PID_FILE" "$IPC"
+  write_activity false "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$(activity_value last_clip)"
+}
+
+cmd_save() {
+  load_config
+  buffer_running || die "replay buffer is not running"
+  local seconds="${1:-}"
+  local path=""
+  if [[ -n $seconds ]]; then
+    [[ $seconds =~ ^[0-9]+$ ]] || die "seconds must be a positive integer"
+    (( seconds > 0 )) || die "seconds must be a positive integer"
+    path=$("$GSR_CLI_BIN" -ipc "$IPC" save-replay "$seconds")
+  else
+    path=$("$GSR_CLI_BIN" -ipc "$IPC" save-replay)
+  fi
+  path=${path//$'\n'/}
+  [[ -n $path ]] || die "save-replay did not return a file path"
+  write_activity true "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$path"
+  notify "Replay saved" "$path"
+  printf '%s\n' "$path"
+}
+
+print_status_json() {
+  local running="$1"
+  printf '{'
+  printf '"running":%s,' "$(json_bool "$running")"
+  printf '"monitor":%s,' "$(json_string_or_null "${2:-}")"
+  printf '"configuredMonitor":%s,' "$(json_string "$CONFIG_MONITOR")"
+  printf '"seconds":%s,' "${3:-$CONFIG_SECONDS}"
+  printf '"audio":%s,' "$(json_string "${4:-$CONFIG_AUDIO}")"
+  printf '"pid":%s,' "$(json_string_or_null "${5:-}")"
+  printf '"ipc":%s,' "$(json_string "$IPC")"
+  printf '"outputDir":%s,' "$(json_string "$(output_dir)")"
+  printf '"lastClip":%s' "$(json_string_or_null "${6:-}")"
+  printf '}\n'
+}
+
+cmd_status() {
+  load_config
+  local json="false" pid="" running="false"
+  if [[ ${1:-} == --json ]]; then
+    json="true"
+  fi
+  pid=$(read_pid 2>/dev/null || true)
+  if buffer_running; then
+    running="true"
+  else
+    pid=""
+  fi
+  local monitor seconds audio last_clip
+  monitor=$(activity_value monitor)
+  seconds=$(activity_value seconds)
+  audio=$(activity_value audio)
+  last_clip=$(activity_value last_clip)
+  [[ -n $seconds ]] || seconds=$CONFIG_SECONDS
+  [[ -n $audio ]] || audio=$CONFIG_AUDIO
+  if [[ $running == true && -z $monitor ]]; then
+    monitor=$(resolve_monitor)
+  fi
+
+  if [[ $json == true ]]; then
+    print_status_json "$running" "$monitor" "$seconds" "$audio" "$pid" "$last_clip"
+    return
+  fi
+  if [[ $running == true ]]; then
+    printf 'running %s last %ss audio=%s\n' "$monitor" "$seconds" "$audio"
+  else
+    printf 'stopped monitor=%s last %ss audio=%s\n' "${CONFIG_MONITOR:-focused}" "$CONFIG_SECONDS" "$CONFIG_AUDIO"
+  fi
+}
+
+cmd_monitors() {
+  local json="false"
+  if [[ ${1:-} == --json ]]; then
+    json="true"
+  fi
+  local focused
+  focused=$(focused_monitor || true)
+  if [[ $json == true ]]; then
+    local first="true" line name size
+    printf '['
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      name=${line%%|*}
+      size=${line#*|}
+      [[ $first == true ]] || printf ','
+      first="false"
+      printf '{"name":%s,"size":%s,"focused":%s}' \
+        "$(json_string "$name")" \
+        "$(json_string "$size")" \
+        "$(json_bool "$([[ $name == "$focused" ]] && echo true || echo false)")"
+    done < <(list_monitor_lines)
+    printf ']\n'
+    return
+  fi
+  local line name size mark
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    name=${line%%|*}
+    size=${line#*|}
+    mark=" "
+    [[ $name == "$focused" ]] && mark="*"
+    printf '%s %s %s\n' "$mark" "$name" "$size"
+  done < <(list_monitor_lines)
+}
+
+cmd_settings_show() {
+  load_config
+  if [[ ${1:-} == --json ]]; then
+    printf '{'
+    printf '"monitor":%s,' "$(json_string "$CONFIG_MONITOR")"
+    printf '"seconds":%s,' "$CONFIG_SECONDS"
+    printf '"audio":%s' "$(json_string "$CONFIG_AUDIO")"
+    printf '}\n'
+    return
+  fi
+  printf 'monitor=%s\n' "$CONFIG_MONITOR"
+  printf 'seconds=%s\n' "$CONFIG_SECONDS"
+  printf 'audio=%s\n' "$CONFIG_AUDIO"
+}
+
+cmd_settings_set() {
+  load_config
+  local key="${1:-}" value="${2:-}"
+  [[ -n $key ]] || die_usage "settings set requires a key"
+  case "$key" in
+  monitor)
+    CONFIG_MONITOR="$value"
+    ;;
+  seconds)
+    [[ $value =~ ^[0-9]+$ ]] || die "seconds must be an integer"
+    CONFIG_SECONDS="$value"
+    clamp_seconds
+    [[ $CONFIG_SECONDS == "$value" ]] || die "seconds must be between $MIN_SECONDS and $MAX_SECONDS"
+    ;;
+  audio)
+    [[ $value == none || $value == desktop || $value == both ]] || die "audio must be none, desktop, or both"
+    CONFIG_AUDIO="$value"
+    ;;
+  *)
+    die "unknown setting: $key"
+    ;;
+  esac
+  write_config
+  cmd_settings_show --json
+}
+
+cmd_doctor() {
+  local ok="true"
+  printf 'gpu-screen-recorder: '
+  if command -v "$GSR_BIN" >/dev/null 2>&1; then
+    printf 'ok (%s)\n' "$("$GSR_BIN" --version 2>/dev/null | head -n 1 || echo present)"
+  else
+    printf 'missing\n'
+    ok="false"
+  fi
+  printf 'gsr-cli: '
+  if command -v "$GSR_CLI_BIN" >/dev/null 2>&1; then
+    printf 'ok\n'
+  else
+    printf 'missing\n'
+    ok="false"
+  fi
+  printf 'monitors:\n'
+  cmd_monitors
+  printf 'ipc: %s\n' "$IPC"
+  printf 'buffer: '
+  if buffer_running; then
+    printf 'running\n'
+  else
+    printf 'stopped\n'
+  fi
+  [[ $ok == true ]]
+}
+
+main() {
+  local cmd="${1:-}"
+  case "$cmd" in
+  ""|-h|--help) usage ;;
+  --version|-V) printf '%s %s\n' "$PROGRAM" "$VERSION" ;;
+  start) shift; cmd_start "$@" ;;
+  stop) cmd_stop ;;
+  save) shift; cmd_save "${1:-}" ;;
+  status) shift; cmd_status "${1:-}" ;;
+  monitors) shift; cmd_monitors "${1:-}" ;;
+  settings)
+    shift
+    case "${1:-}" in
+    show) shift; cmd_settings_show "${1:-}" ;;
+    set) shift; cmd_settings_set "${1:-}" "${2:-}" ;;
+    *) die_usage "settings expects show or set" ;;
+    esac
+    ;;
+  doctor) cmd_doctor ;;
+  *) die_usage "unknown command: $cmd" ;;
+  esac
+}
+
+main "$@"
