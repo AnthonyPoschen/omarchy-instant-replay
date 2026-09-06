@@ -6,8 +6,9 @@ helper="$root/bin/omarchy-shadowplay"
 fake_gsr="$root/tests/fake-gsr"
 fake_cli="$root/tests/fake-gsr-cli"
 fake_ffmpeg="$root/tests/fake-ffmpeg"
+fake_slurp="$root/tests/fake-slurp"
 
-chmod +x "$helper" "$fake_gsr" "$fake_cli" "$fake_ffmpeg"
+chmod +x "$helper" "$fake_gsr" "$fake_cli" "$fake_ffmpeg" "$fake_slurp"
 
 work=$(mktemp -d)
 session_pid=""
@@ -41,6 +42,8 @@ assert_file_contains() {
 
 grep -F "exec -a omarchy-shadowplay-gsr" "$helper" >/dev/null \
   || fail "helper must launch the recorder as omarchy-shadowplay-gsr"
+grep -F "omarchy-capture-region" "$helper" >/dev/null \
+  || fail "helper must use Omarchy's region picker"
 
 replay_dir="$XDG_VIDEOS_DIR/Replays"
 segment_index="$XDG_STATE_HOME/omarchy-shadowplay/segments/index"
@@ -423,4 +426,46 @@ echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "f
 [[ -r $segment_index ]] || fail "mode change away from Follow should Split (keep Segment)"
 "$helper" stop
 
+# Region Mode: persist rectangle, reject spanning, re-pick Split.
+export SHADOWPLAY_NOW=9000
+rm -rf "$replay_dir"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+"$helper" settings set mode region >/dev/null
+"$helper" settings set region "400x300+100+50" >/dev/null
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.mode == "region" and .region == "400x300+100+50"' >/dev/null   || fail "region was not persisted: $settings"
+"$helper" start >/dev/null
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-w"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "region"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-region"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "400x300+100+50"
+status=$("$helper" status --json)
+echo "$status" | jq -e '.running == true and .mode == "region" and .region == "400x300+100+50" and .monitor == "HDMI-A-1"' >/dev/null   || fail "region start status: $status"
+"$helper" stop
+"$helper" start >/dev/null
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "400x300+100+50"
+"$helper" stop
+
+if "$helper" settings set region "200x200+3400+10" >/dev/null 2>"$work/span-err"; then
+  fail "spanning region was accepted"
+fi
+grep -qi 'span' "$work/span-err" || fail "spanning region error was unclear: $(<"$work/span-err")"
+
+export SHADOWPLAY_REGION_PICKER="$fake_slurp"
+export SHADOWPLAY_SLURP_REGION="120,80 200x200"
+"$helper" settings set region "400x300+100+50" >/dev/null
+"$helper" start --mode=region --region=400x300+100+50 >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ ${segment_count:-0} == 0 ]] || fail "region start should not Split yet, got $segment_count"
+"$helper" pick-region >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 1 ]] || fail "re-pick while Live should Split, got $segment_count"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "200x200+120+80"
+clip=$("$helper" save)
+[[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Save after region re-pick did not join"
+[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 2 ]] || fail "region re-pick Save should be one Clip from Segment + live"
+[[ $clip == "$replay_dir/Replay-9000.mp4" ]] || fail "region re-pick Clip path was $clip"
+[[ -e $clip ]] || fail "region re-pick Clip was not written"
+assert_no_gsr_leftovers
+"$helper" stop
 echo OK

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Omarchy's region picker prints slurp geometry: X,Y WxH
+printf '%s\n' "${SHADOWPLAY_SLURP_REGION:-100,100 200x200}"

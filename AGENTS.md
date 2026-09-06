@@ -14,9 +14,9 @@ This is an Omarchy 4 Quickshell plugin. The installable id is
 
 ## Capture rules
 
-v0.1 is monitor-scoped replay. Do not add region or portal window capture
-until the helper can retarget without surprising buffer loss, and until
-portal start failures have an explicit fallback.
+Replay is monitor-scoped or a persisted Region rectangle on one monitor.
+Do not add portal window capture until portal start failures have an
+explicit fallback. Re-picking a region while Live is a Split.
 
 Launch the recorder as argv0 `omarchy-shadowplay-gsr` so Omarchy's
 `pgrep -f '^gpu-screen-recorder'` session recorder does not stop this

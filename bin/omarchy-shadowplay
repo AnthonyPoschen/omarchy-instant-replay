@@ -54,6 +54,7 @@ CONFIG_BITRATE_MODE="$DEFAULT_BITRATE_MODE"
 CONFIG_MATCH_LIST=""
 CONFIG_BLACKLIST=""
 CONFIG_OUTPUT_DIR=""
+CONFIG_REGION=""
 
 runtime_base() {
   local candidate="${XDG_RUNTIME_DIR:-}"
@@ -105,6 +106,8 @@ Usage:
   $PROGRAM settings set cursor <true|false>
   $PROGRAM settings set framerateMode <cfr|vfr>
   $PROGRAM settings set bitrateMode <cbr|vbr>
+  $PROGRAM settings set region <WxH+X+Y>
+  $PROGRAM pick-region
   $PROGRAM tick
   $PROGRAM doctor
   $PROGRAM --help
@@ -214,6 +217,7 @@ reset_config_defaults() {
   CONFIG_MATCH_LIST=""
   CONFIG_BLACKLIST=""
   CONFIG_OUTPUT_DIR=""
+  CONFIG_REGION=""
 }
 
 config_value_safe() {
@@ -294,6 +298,9 @@ load_config() {
     outputDir)
       config_value_safe "$value" && CONFIG_OUTPUT_DIR="$value"
       ;;
+    region)
+      config_value_safe "$value" && CONFIG_REGION="$value"
+      ;;
     esac
   done < "$CONFIG_FILE"
   clamp_seconds
@@ -320,6 +327,7 @@ write_config() {
   config_value_safe "$CONFIG_MONITOR" || die "monitor value contains a newline"
   config_value_safe "$CONFIG_CODEC" || die "codec value contains a newline"
   config_value_safe "$CONFIG_OUTPUT_DIR" || die "outputDir value contains a newline"
+  config_value_safe "$CONFIG_REGION" || die "region value contains a newline"
   mkdir -p "$CONFIG_DIR"
   chmod 700 "$CONFIG_DIR" 2>/dev/null || true
   local tmp="$CONFIG_DIR/.config.$$"
@@ -344,6 +352,7 @@ write_config() {
       printf 'matchList=%s\n' "$match_csv"
       printf 'blacklist=%s\n' "$blacklist_csv"
       printf 'outputDir=%s\n' "$CONFIG_OUTPUT_DIR"
+      printf 'region=%s\n' "$CONFIG_REGION"
     } > "$tmp"
   )
   mv -f "$tmp" "$CONFIG_FILE"
@@ -446,6 +455,129 @@ list_monitor_names() {
   list_monitor_lines | awk -F'|' 'NF { print $1 }'
 }
 
+normalize_region_spec() {
+  local spec="$1"
+  spec=${spec//$'\n'/}
+  if [[ $spec =~ ^(-?[0-9]+),(-?[0-9]+)[[:space:]]+([0-9]+)x([0-9]+)$ ]]; then
+    printf '%sx%s+%s+%s\n' "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    return 0
+  fi
+  if [[ $spec =~ ^([0-9]+)x([0-9]+)\+(-?[0-9]+)\+(-?[0-9]+)$ ]]; then
+    printf '%s\n' "$spec"
+    return 0
+  fi
+  return 1
+}
+
+parse_region_spec() {
+  local spec
+  spec=$(normalize_region_spec "$1") || return 1
+  [[ $spec =~ ^([0-9]+)x([0-9]+)\+(-?[0-9]+)\+(-?[0-9]+)$ ]] || return 1
+  REGION_W="${BASH_REMATCH[1]}"
+  REGION_H="${BASH_REMATCH[2]}"
+  REGION_X="${BASH_REMATCH[3]}"
+  REGION_Y="${BASH_REMATCH[4]}"
+}
+
+list_monitor_geometry_lines() {
+  local line name size rest origin w h x y
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    name=${line%%|*}
+    rest=${line#*|}
+    size=${rest%%|*}
+    origin=""
+    if [[ $rest == *'|'* ]]; then
+      origin=${rest#*|}
+    fi
+    w=${size%%x*}
+    h=${size#*x}
+    x=""
+    y=""
+    if [[ $origin =~ ^(-?[0-9]+)[,x](-?[0-9]+)$ ]]; then
+      x="${BASH_REMATCH[1]}"
+      y="${BASH_REMATCH[2]}"
+    fi
+    printf '%s|%s|%s|%s|%s\n' "$name" "$w" "$h" "$x" "$y"
+  done < <(list_monitor_lines)
+}
+
+hypr_monitor_geometry_lines() {
+  local bin="${SHADOWPLAY_HYPRCTL_BIN:-hyprctl}"
+  command -v "$bin" >/dev/null 2>&1 || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  "$bin" monitors -j 2>/dev/null | jq -r '
+    .[]? |
+    select(.name != null and .width != null and .height != null and .x != null and .y != null) |
+    "\(.name)|\((.width / (.scale // 1)) | floor)|\((.height / (.scale // 1)) | floor)|\(.x)|\(.y)"
+  ' || true
+}
+
+monitor_geometry_lines() {
+  local lines
+  lines=$(list_monitor_geometry_lines)
+  local complete="true" name w h x y
+  while IFS='|' read -r name w h x y; do
+    [[ -n $name ]] || continue
+    if [[ -z $x || -z $y ]]; then complete="false"; break; fi
+  done <<<"$lines"
+  if [[ $complete == true && -n $lines ]]; then
+    printf '%s\n' "$lines"
+    return
+  fi
+  local hypr
+  hypr=$(hypr_monitor_geometry_lines)
+  if [[ -n $hypr ]]; then
+    printf '%s\n' "$hypr"
+    return
+  fi
+  printf '%s\n' "$lines"
+}
+
+region_host_monitor() {
+  local spec="$1"
+  parse_region_spec "$spec" || die "region must be WxH+X+Y"
+  (( REGION_W > 0 && REGION_H > 0 )) || die "region width and height must be positive"
+  local name w h x y rx ry rw rh right bottom mx my
+  rx=$REGION_X; ry=$REGION_Y; rw=$REGION_W; rh=$REGION_H
+  right=$((rx + rw))
+  bottom=$((ry + rh))
+  local host="" overlap_count=0
+  while IFS='|' read -r name w h x y; do
+    [[ -n $name && $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ && $x =~ ^-?[0-9]+$ && $y =~ ^-?[0-9]+$ ]] || continue
+    mx=$((x + w))
+    my=$((y + h))
+    if (( rx >= x && ry >= y && right <= mx && bottom <= my )); then
+      host="$name"
+      overlap_count=$((overlap_count + 1))
+    elif (( rx < mx && right > x && ry < my && bottom > y )); then
+      overlap_count=$((overlap_count + 1))
+    fi
+  done < <(monitor_geometry_lines)
+  if (( overlap_count > 1 )); then
+    die "region spans more than one monitor"
+  fi
+  [[ -n $host ]] || die "region does not sit on a capture monitor"
+  printf '%s\n' "$host"
+}
+
+validate_region() {
+  local spec="$1"
+  region_host_monitor "$spec" >/dev/null
+}
+
+pick_region_spec() {
+  local bin="${SHADOWPLAY_REGION_PICKER:-omarchy-capture-region}"
+  command -v "$bin" >/dev/null 2>&1 || die "region picker is not available: $bin"
+  local spec
+  spec=$("$bin") || die "region picker was cancelled"
+  spec=$(normalize_region_spec "$spec") || die "region picker returned an invalid rectangle"
+  [[ -n $spec ]] || die "region picker was cancelled"
+  printf '%s\n' "$spec"
+}
+
+
+
 focused_monitor() {
   if [[ -n ${SHADOWPLAY_FOCUSED_MONITOR:-} ]]; then
     printf '%s\n' "$SHADOWPLAY_FOCUSED_MONITOR"
@@ -541,6 +673,7 @@ write_activity() {
       printf 'subject_class=%s\n' "$subject_class"
       printf 'subject_address=%s\n' "$subject_address"
       printf 'linger_until=%s\n' "$linger_until"
+      printf 'region=%s\n' "$CONFIG_REGION"
     } > "$tmp"
   )
   mv -f "$tmp" "$ACTIVITY_FILE"
@@ -594,6 +727,16 @@ apply_start_flags() {
       local value="${arg#--audio=}"
       [[ $value == none || $value == desktop || $value == both ]] || die "audio must be none, desktop, or both"
       CONFIG_AUDIO="$value"
+      ;;
+    --region=*)
+      local value="${arg#--region=}"
+      value=$(normalize_region_spec "$value") || die "region must be WxH+X+Y or X,Y WxH"
+      CONFIG_REGION="$value"
+      ;;
+    --mode=*)
+      local value="${arg#--mode=}"
+      [[ $value == monitor || $value == follow || $value == pin || $value == region ]] || die "mode must be monitor, follow, pin, or region"
+      CONFIG_MODE="$value"
       ;;
     "") ;;
     *) die_usage "unknown start option: $arg" ;;
@@ -685,6 +828,7 @@ join_canvas() {
   while IFS= read -r line; do
     [[ -n $line ]] || continue
     size=${line#*|}
+    size=${size%%|*}
     w=${size%%x*}
     h=${size#*x}
     [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ ]] || continue
@@ -707,6 +851,7 @@ live_capture_differs() {
   [[ $(activity_value bitrate_mode) != "$CONFIG_BITRATE_MODE" ]] && return 0
   [[ $(activity_value mode) != "$CONFIG_MODE" ]] && return 0
   [[ $(activity_value capture_extent) != "$CONFIG_CAPTURE_EXTENT" ]] && return 0
+  [[ $(activity_value region) != "$CONFIG_REGION" ]] && return 0
   return 1
 }
 
@@ -740,15 +885,27 @@ launch_recorder() {
     die_device_busy
   fi
 
-  local monitor seconds audio
-  monitor=$(resolve_monitor)
+  local monitor seconds audio region=""
   seconds=$CONFIG_SECONDS
   audio=$CONFIG_AUDIO
+  if [[ $CONFIG_MODE == region ]]; then
+    [[ -n $CONFIG_REGION ]] || die "Region Mode needs a rectangle. Pick a region first."
+    validate_region "$CONFIG_REGION"
+    monitor=$(region_host_monitor "$CONFIG_REGION")
+    region=$CONFIG_REGION
+  else
+    monitor=$(resolve_monitor)
+  fi
   mkdir -p "$GSR_OUTPUT_DIR"
   chmod 700 "$GSR_OUTPUT_DIR"
 
-  local -a gsr_args=(
-    -w "$monitor"
+  local -a gsr_args=()
+  if [[ $CONFIG_MODE == region ]]; then
+    gsr_args+=(-w region -region "$region")
+  else
+    gsr_args+=(-w "$monitor")
+  fi
+  gsr_args+=(
     -f "$CONFIG_FPS"
     -fm "$CONFIG_FRAMERATE_MODE"
     -k "$CONFIG_CODEC"
@@ -796,7 +953,11 @@ launch_recorder() {
   fi
 
   write_activity true "$monitor" "$seconds" "$audio" "$(activity_value last_clip)" "$(now_epoch)"
-  notify "Replay buffer running" "$monitor · last ${seconds}s"
+  if [[ $CONFIG_MODE == region ]]; then
+    notify "Replay buffer running" "region $region · last ${seconds}s"
+  else
+    notify "Replay buffer running" "$monitor · last ${seconds}s"
+  fi
 }
 
 split_and_restart() {
@@ -1196,7 +1357,12 @@ cmd_start() {
     return 0
   fi
   local monitor
-  monitor=$(resolve_monitor)
+  if [[ $CONFIG_MODE == region ]]; then
+    [[ -n $CONFIG_REGION ]] || die "Region Mode needs a rectangle. Pick a region first."
+    monitor=$(region_host_monitor "$CONFIG_REGION")
+  else
+    monitor=$(resolve_monitor)
+  fi
   if buffer_running; then
     if live_capture_differs "$monitor"; then
       split_and_restart
@@ -1259,6 +1425,7 @@ print_status_json() {
   printf '"armed":%s,' "$(json_bool "$armed")"
   printf '"linger":%s,' "$(json_bool "$linger")"
   printf '"subject":%s,' "$(json_string_or_null "$(activity_value subject_class)")"
+  printf '"region":%s,' "$(json_string "$CONFIG_REGION")"
   print_settings_fields
   printf '}\n'
 }
@@ -1314,6 +1481,7 @@ cmd_monitors() {
       [[ -n $line ]] || continue
       name=${line%%|*}
       size=${line#*|}
+      size=${size%%|*}
       [[ $first == true ]] || printf ','
       first="false"
       printf '{"name":%s,"size":%s,"focused":%s}' \
@@ -1329,6 +1497,7 @@ cmd_monitors() {
     [[ -n $line ]] || continue
     name=${line%%|*}
     size=${line#*|}
+    size=${size%%|*}
     mark=" "
     [[ $name == "$focused" ]] && mark="*"
     printf '%s %s %s\n' "$mark" "$name" "$size"
@@ -1343,6 +1512,7 @@ cmd_settings_show() {
     printf '"seconds":%s,' "$CONFIG_SECONDS"
     printf '"audio":%s,' "$(json_string "$CONFIG_AUDIO")"
     printf '"outputDir":%s,' "$(json_string "$CONFIG_OUTPUT_DIR")"
+    printf '"region":%s,' "$(json_string "$CONFIG_REGION")"
     print_settings_fields
     printf '}\n'
     return
@@ -1354,6 +1524,7 @@ cmd_settings_show() {
   printf 'filter=%s\n' "$CONFIG_FILTER"
   printf 'captureExtent=%s\n' "$CONFIG_CAPTURE_EXTENT"
   printf 'outputDir=%s\n' "$CONFIG_OUTPUT_DIR"
+  printf 'region=%s\n' "$CONFIG_REGION"
 }
 
 cmd_settings_set() {
@@ -1421,6 +1592,14 @@ cmd_settings_set() {
     fi
     CONFIG_OUTPUT_DIR="$value"
     ;;
+  region)
+    config_value_safe "$value" || die "region value contains a newline"
+    if [[ -n $value ]]; then
+      value=$(normalize_region_spec "$value") || die "region must be WxH+X+Y or X,Y WxH"
+      validate_region "$value"
+    fi
+    CONFIG_REGION="$value"
+    ;;
   *)
     die "unknown setting: $key"
     ;;
@@ -1450,7 +1629,30 @@ cmd_settings_set() {
     cmd_follow_tick
   elif buffer_running; then
     local monitor
-    monitor=$(resolve_monitor)
+    if [[ $CONFIG_MODE == region ]]; then
+      [[ -n $CONFIG_REGION ]] || die "Region Mode needs a rectangle. Pick a region first."
+      monitor=$(region_host_monitor "$CONFIG_REGION")
+    else
+      monitor=$(resolve_monitor)
+    fi
+    if live_capture_differs "$monitor"; then
+      split_and_restart
+    fi
+  fi
+  cmd_settings_show --json
+}
+
+cmd_pick_region() {
+  load_config
+  local spec
+  spec=$(pick_region_spec)
+  validate_region "$spec"
+  CONFIG_REGION="$spec"
+  CONFIG_MODE="region"
+  write_config
+  if buffer_running; then
+    local monitor
+    monitor=$(region_host_monitor "$CONFIG_REGION")
     if live_capture_differs "$monitor"; then
       split_and_restart
     fi
@@ -1511,6 +1713,7 @@ main() {
     esac
     ;;
   tick) cmd_follow_tick; cmd_status --json ;;
+  pick-region) cmd_pick_region ;;
   doctor) cmd_doctor ;;
   *) die_usage "unknown command: $cmd" ;;
   esac
