@@ -463,8 +463,12 @@ activity_value() {
 }
 
 write_activity() {
-  local running="$1" monitor="$2" seconds="$3" audio="$4" last_clip="${5:-}"
+  local running="$1" monitor="$2" seconds="$3" audio="$4" last_clip="${5:-}" started="${6:-}"
   local tmp="$STATE_DIR/.activity.$$"
+  if [[ $running == true && -z $started ]]; then
+    started=$(activity_value started)
+    [[ -n $started ]] || started=$(now_epoch)
+  fi
   (umask 077
     {
       printf 'running=%s\n' "$running"
@@ -472,6 +476,15 @@ write_activity() {
       printf 'seconds=%s\n' "$seconds"
       printf 'audio=%s\n' "$audio"
       printf 'last_clip=%s\n' "$last_clip"
+      printf 'started=%s\n' "$started"
+      printf 'codec=%s\n' "$CONFIG_CODEC"
+      printf 'fps=%s\n' "$CONFIG_FPS"
+      printf 'quality=%s\n' "$CONFIG_QUALITY"
+      printf 'cursor=%s\n' "$CONFIG_CURSOR"
+      printf 'framerate_mode=%s\n' "$CONFIG_FRAMERATE_MODE"
+      printf 'bitrate_mode=%s\n' "$CONFIG_BITRATE_MODE"
+      printf 'mode=%s\n' "$CONFIG_MODE"
+      printf 'capture_extent=%s\n' "$CONFIG_CAPTURE_EXTENT"
     } > "$tmp"
   )
   mv -f "$tmp" "$ACTIVITY_FILE"
@@ -587,7 +600,7 @@ discard_old_segments() {
 
 flush_segment() {
   buffer_running || return 0
-  local src dest end
+  local src dest end started seconds lived duration audio
   src=$(save_replay_path)
   [[ -e $src ]] || die "save-replay did not create a segment file"
   mkdir -p "$SEGMENT_DIR"
@@ -595,7 +608,19 @@ flush_segment() {
   end=$(now_epoch)
   dest=$(mktemp "$SEGMENT_DIR/seg-${end}-XXXXXX")
   mv -f "$src" "$dest" || { cp -f "$src" "$dest" && rm -f "$src"; }
-  printf '%s|%s\n' "$end" "$dest" >> "$SEGMENT_INDEX"
+  started=$(activity_value started)
+  seconds=$(activity_value seconds)
+  [[ $seconds =~ ^[0-9]+$ ]] || seconds=$CONFIG_SECONDS
+  duration=$seconds
+  if [[ $started =~ ^[0-9]+$ ]] && (( end > started )); then
+    lived=$((end - started))
+    (( lived < duration )) && duration=$lived
+  elif [[ $started =~ ^[0-9]+$ ]] && (( end == started )); then
+    duration=1
+  fi
+  audio=$(activity_value audio)
+  [[ -n $audio ]] || audio=$CONFIG_AUDIO
+  printf '%s|%s|%s|%s\n' "$end" "$dest" "$duration" "$audio" >> "$SEGMENT_INDEX"
   discard_old_segments
 }
 
@@ -615,13 +640,17 @@ join_canvas() {
 
 live_capture_differs() {
   local monitor="$1"
-  local live_monitor live_seconds live_audio
-  live_monitor=$(activity_value monitor)
-  live_seconds=$(activity_value seconds)
-  live_audio=$(activity_value audio)
-  [[ $live_monitor != "$monitor" ]] && return 0
-  [[ $live_seconds != "$CONFIG_SECONDS" ]] && return 0
-  [[ $live_audio != "$CONFIG_AUDIO" ]] && return 0
+  [[ $(activity_value monitor) != "$monitor" ]] && return 0
+  [[ $(activity_value seconds) != "$CONFIG_SECONDS" ]] && return 0
+  [[ $(activity_value audio) != "$CONFIG_AUDIO" ]] && return 0
+  [[ $(activity_value codec) != "$CONFIG_CODEC" ]] && return 0
+  [[ $(activity_value fps) != "$CONFIG_FPS" ]] && return 0
+  [[ $(activity_value quality) != "$CONFIG_QUALITY" ]] && return 0
+  [[ $(activity_value cursor) != "$CONFIG_CURSOR" ]] && return 0
+  [[ $(activity_value framerate_mode) != "$CONFIG_FRAMERATE_MODE" ]] && return 0
+  [[ $(activity_value bitrate_mode) != "$CONFIG_BITRATE_MODE" ]] && return 0
+  [[ $(activity_value mode) != "$CONFIG_MODE" ]] && return 0
+  [[ $(activity_value capture_extent) != "$CONFIG_CAPTURE_EXTENT" ]] && return 0
   return 1
 }
 
@@ -709,7 +738,7 @@ launch_recorder() {
     die "replay buffer failed to start"
   fi
 
-  write_activity true "$monitor" "$seconds" "$audio" "$(activity_value last_clip)"
+  write_activity true "$monitor" "$seconds" "$audio" "$(activity_value last_clip)" "$(now_epoch)"
   notify "Replay buffer running" "$monitor · last ${seconds}s"
 }
 
@@ -722,16 +751,36 @@ split_and_restart() {
 join_clip() {
   local live="$1"
   local out="$2"
-  local -a inputs=()
-  local end path i canvas canvas_w canvas_h fc maps
+  local window="${3:-$CONFIG_SECONDS}"
+  local now cutoff end path duration audio trim kept i canvas canvas_w canvas_h fc maps
+  local -a paths=() trims=() durs=() auds=()
+  now=$(now_epoch)
+  cutoff=$((now - window))
   if [[ -r $SEGMENT_INDEX ]]; then
-    while IFS='|' read -r end path || [[ -n ${end:-} ]]; do
+    while IFS='|' read -r end path duration audio || [[ -n ${end:-} ]]; do
       [[ -n ${path:-} && -e $path ]] || continue
-      inputs+=("$path")
+      [[ $duration =~ ^[0-9]+$ ]] || duration=$window
+      [[ -n $audio ]] || audio=none
+      (( duration > 0 )) || continue
+      trim=0
+      if (( end - duration < cutoff )); then
+        trim=$((cutoff - (end - duration)))
+      fi
+      if (( trim >= duration )); then
+        continue
+      fi
+      kept=$((duration - trim))
+      paths+=("$path")
+      trims+=("$trim")
+      durs+=("$kept")
+      auds+=("$audio")
     done < "$SEGMENT_INDEX"
   fi
-  inputs+=("$live")
-  if (( ${#inputs[@]} <= 1 )); then
+  paths+=("$live")
+  trims+=(0)
+  durs+=("$window")
+  auds+=("$CONFIG_AUDIO")
+  if (( ${#paths[@]} <= 1 )); then
     mv -f "$live" "$out" || { cp -f "$live" "$out" && rm -f "$live"; }
     printf '%s\n' "$out"
     return
@@ -741,26 +790,38 @@ join_clip() {
   canvas_w=${canvas%%x*}
   canvas_h=${canvas#*x}
   local keep_audio=0
-  [[ $CONFIG_AUDIO != none ]] && keep_audio=1
+  for audio in "${auds[@]}"; do
+    if [[ $audio != none ]]; then
+      keep_audio=1
+      break
+    fi
+  done
   fc=""
   maps=""
-  for i in "${!inputs[@]}"; do
+  for i in "${!paths[@]}"; do
     fc+="[$i:v]scale=${canvas_w}:${canvas_h}:force_original_aspect_ratio=decrease,pad=${canvas_w}:${canvas_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=60,format=yuv420p[v$i];"
     maps+="[v$i]"
     if (( keep_audio )); then
-      fc+="[$i:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[a$i];"
+      if [[ ${auds[$i]} != none ]]; then
+        fc+="[$i:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[a$i];"
+      else
+        fc+="anullsrc=r=48000:cl=stereo:d=${durs[$i]},aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[a$i];"
+      fi
       maps+="[a$i]"
     fi
   done
   local -a ff_args=(-hide_banner -loglevel error -y)
-  for path in "${inputs[@]}"; do
-    ff_args+=(-i "$path")
+  for i in "${!paths[@]}"; do
+    if (( ${trims[$i]} > 0 )); then
+      ff_args+=(-ss "${trims[$i]}")
+    fi
+    ff_args+=(-i "${paths[$i]}")
   done
   if (( keep_audio )); then
-    fc+="${maps}concat=n=${#inputs[@]}:v=1:a=1[v][a]"
+    fc+="${maps}concat=n=${#paths[@]}:v=1:a=1[v][a]"
     ff_args+=(-filter_complex "$fc" -map "[v]" -map "[a]" -c:v libx264 -preset veryfast -crf 18 -c:a aac -b:a 192k "$out")
   else
-    fc+="${maps}concat=n=${#inputs[@]}:v=1:a=0[v]"
+    fc+="${maps}concat=n=${#paths[@]}:v=1:a=0[v]"
     ff_args+=(-filter_complex "$fc" -map "[v]" -an -c:v libx264 -preset veryfast -crf 18 "$out")
   fi
   "$FFMPEG_BIN" "${ff_args[@]}" || die "failed to join replay segments"
@@ -800,12 +861,13 @@ cmd_save() {
     (( seconds > 0 )) || die "seconds must be a positive integer"
   fi
   discard_old_segments "${seconds:-$CONFIG_SECONDS}"
-  local live path dir stamp
+  local live path dir stamp window
+  window="${seconds:-$CONFIG_SECONDS}"
   live=$(save_replay_path "$seconds")
   dir=$(output_dir)
   mkdir -p "$dir"
   stamp=$(now_epoch)
-  path=$(join_clip "$live" "$dir/Replay-${stamp}.mp4")
+  path=$(join_clip "$live" "$dir/Replay-${stamp}.mp4" "$window")
   rm -f "$live"
   write_activity true "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$path"
   notify "Replay saved" "$path"

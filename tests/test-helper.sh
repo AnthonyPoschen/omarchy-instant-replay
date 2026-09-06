@@ -222,6 +222,15 @@ segment_count=$(grep -c . "$segment_index" || true)
 [[ $segment_count == 3 ]] || fail "live settings Split should flush another Segment, got $segment_count"
 assert_no_gsr_leftovers
 
+"$helper" settings set fps 30 >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 4 ]] || fail "encoder settings should Split while Live, got $segment_count"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "30"
+"$helper" settings set filter allowlist >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 4 ]] || fail "filter should not Split, got $segment_count"
+assert_no_gsr_leftovers
+
 export SHADOWPLAY_NOW=1100
 rm -f "$SHADOWPLAY_FAKE_DIR/concat.list"
 clip=$("$helper" save)
@@ -231,5 +240,34 @@ clip=$("$helper" save)
 [[ -e $clip ]] || fail "discard Clip was not written"
 assert_no_gsr_leftovers
 
+"$helper" stop
+
+export SHADOWPLAY_NOW=3000
+rm -rf "$replay_dir"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+"$helper" start --monitor=DP-1 --seconds=60 --audio=none >/dev/null
+"$helper" settings set audio desktop >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 1 ]] || fail "audio change should Split, got $segment_count"
+clip=$("$helper" save)
+[[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Save after audio Split did not join"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "anullsrc"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "concat=n=2:v=1:a=1"
+if grep -Fxq -- "-an" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"; then
+  fail "audio Split join stripped audio"
+fi
+"$helper" stop
+
+export SHADOWPLAY_NOW=4000
+rm -rf "$replay_dir"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+"$helper" start --monitor=DP-1 --seconds=60 --audio=desktop >/dev/null
+export SHADOWPLAY_NOW=4060
+"$helper" start --monitor=HDMI-A-1 >/dev/null
+export SHADOWPLAY_NOW=4110
+clip=$("$helper" save)
+[[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Save after delayed Split did not join"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "-ss"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "50"
 "$helper" stop
 echo OK
