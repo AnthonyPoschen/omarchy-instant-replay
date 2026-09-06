@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
@@ -20,6 +21,10 @@ Panel {
   property string lastError: ""
   property string focusSection: "toggle"
   property bool cursorActive: false
+  property bool extrasEncoderOpen: false
+  property bool extrasListsOpen: false
+  property bool extrasHotkeysOpen: false
+  property string hotkeyCopyStatus: ""
 
   readonly property var barIdentity: hostWidget || root
   readonly property bool running: status.running === true
@@ -27,8 +32,10 @@ Panel {
   readonly property int configuredSeconds: Model.boundedInteger(setting("seconds", 60), 60, Model.minSeconds(), Model.maxSeconds())
   readonly property string configuredAudio: Model.normalizeAudio(setting("audio", "desktop"))
   readonly property bool configuredAutostart: setting("autostart", false) === true || String(setting("autostart", false)) === "true"
+  readonly property string configuredMode: Model.normalizeMode(setting("mode", "monitor"))
   readonly property color contentForeground: root.bar ? root.bar.foreground : Color.foreground
   readonly property string contentFontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+  readonly property var modeChoices: Model.modeOptions()
   readonly property var monitorChoices: Model.monitorOptions(monitors)
   readonly property var secondsChoices: Model.secondsOptions()
   readonly property var audioChoices: Model.audioOptions()
@@ -114,14 +121,17 @@ Panel {
 
   function save() {
     if (root.helperPath === "" || actionProc.running) return
-    if (!root.running) {
-      root.open()
-      return
-    }
+    if (!root.running) return
     root.busy = true
     root.lastError = ""
     actionProc.command = root.runHelper(["save"])
     actionProc.running = true
+  }
+
+  function copyHotkeys() {
+    var text = Model.hotkeyLuaSnippet()
+    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(text) + " | wl-copy"])
+    root.hotkeyCopyStatus = "Copied lua binds"
   }
 
   function maybeAutostart() {
@@ -202,7 +212,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: monitorDropdown.popupOpen || secondsDropdown.popupOpen || audioDropdown.popupOpen
+      blocked: monitorDropdown.popupOpen || secondsDropdown.popupOpen || audioDropdown.popupOpen || modeDropdown.popupOpen
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -231,14 +241,15 @@ Panel {
 
         PanelSeparator {}
 
-        Toggle {
+        Dropdown {
+          id: modeDropdown
           width: parent.width
-          label: "Start with the bar"
-          description: "Begin buffering when Omarchy shell loads this widget."
-          checked: root.configuredAutostart
+          label: "Mode"
+          value: root.configuredMode === "monitor" ? "monitor" : "monitor"
+          options: root.modeChoices
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
-          onClicked: root.persistSettings({ autostart: !root.configuredAutostart })
+          onChanged: function(value) { root.applySetting("mode", Model.normalizeMode(value)) }
         }
 
         Dropdown {
@@ -255,7 +266,7 @@ Panel {
         Dropdown {
           id: secondsDropdown
           width: parent.width
-          label: "Replay length"
+          label: "Replay Window"
           value: String(root.configuredSeconds)
           options: root.secondsChoices
           foreground: root.contentForeground
@@ -274,6 +285,16 @@ Panel {
           onChanged: function(value) { root.applySetting("audio", Model.normalizeAudio(value)) }
         }
 
+        Toggle {
+          width: parent.width
+          label: "Start with the bar"
+          description: "Begin buffering when Omarchy shell loads this widget."
+          checked: root.configuredAutostart
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          onClicked: root.persistSettings({ autostart: !root.configuredAutostart })
+        }
+
         Button {
           width: parent.width
           text: root.running ? "Save replay" : "Start buffer"
@@ -282,7 +303,89 @@ Panel {
           fontFamily: root.contentFontFamily
           onClicked: root.running ? root.save() : root.startBuffer()
         }
+
+        PanelSeparator {}
+
+        ExtraGroup {
+          title: "Encoder"
+          open: root.extrasEncoderOpen
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          onToggled: root.extrasEncoderOpen = !root.extrasEncoderOpen
+        }
+
+        ExtraGroup {
+          title: "Match lists"
+          open: root.extrasListsOpen
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          onToggled: root.extrasListsOpen = !root.extrasListsOpen
+        }
+
+        ExtraGroup {
+          title: "Hotkeys"
+          open: root.extrasHotkeysOpen
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          onToggled: root.extrasHotkeysOpen = !root.extrasHotkeysOpen
+
+          Button {
+            width: parent.width
+            text: root.hotkeyCopyStatus !== "" ? root.hotkeyCopyStatus : "Copy lua binds"
+            enabled: !root.busy
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.copyHotkeys()
+          }
+        }
       }
+    }
+  }
+
+  component ExtraGroup: Column {
+    id: extra
+    width: parent ? parent.width : implicitWidth
+    spacing: Style.space(6)
+
+    property string title: ""
+    property bool open: false
+    property color foreground: Color.foreground
+    property string fontFamily: Style.font.family
+    default property alias extraContent: extraBody.data
+    signal toggled()
+
+    MouseArea {
+      width: parent.width
+      height: extraHeader.implicitHeight
+      cursorShape: Qt.PointingHandCursor
+      onClicked: extra.toggled()
+
+      Row {
+        id: extraHeader
+        width: parent.width
+        spacing: Style.space(8)
+
+        Text {
+          text: extra.open ? "▾" : "▸"
+          color: extra.foreground
+          font.family: extra.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
+        PanelSectionHeader {
+          text: extra.title
+          foreground: extra.foreground
+          fontFamily: extra.fontFamily
+        }
+      }
+    }
+
+    Column {
+      id: extraBody
+      width: parent.width
+      spacing: Style.space(8)
+      visible: extra.open
+      height: extra.open ? implicitHeight : 0
     }
   }
 }

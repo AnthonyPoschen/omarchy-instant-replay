@@ -159,3 +159,18 @@ function statusLabel(status) {
   var monitor = status.monitor || "monitor"
   return monitor + " · last " + formatReplayLength(status.seconds)
 }
+
+function modeOptions() {
+  return [{ value: "monitor", label: "Monitor" }]
+}
+
+function hotkeyLuaSnippet() {
+  return [
+    'o.bind("SUPER + ALT + R", "Save replay", "omarchy-shell io.github.anthonyposchen.shadowplay save")',
+    '-- o.bind("SUPER + ALT + S", "Start replay buffer", "omarchy-shell io.github.anthonyposchen.shadowplay start")',
+    '-- o.bind("SUPER + ALT + X", "Stop replay buffer", "omarchy-shell io.github.anthonyposchen.shadowplay stop")',
+    '-- o.bind("SUPER + ALT + T", "Toggle ShadowPlay panel", "omarchy-shell io.github.anthonyposchen.shadowplay toggle")',
+    '-- o.bind("SUPER + ALT + O", "Open ShadowPlay", "omarchy-shell io.github.anthonyposchen.shadowplay open")',
+    '-- o.bind("SUPER + ALT + C", "Close ShadowPlay", "omarchy-shell io.github.anthonyposchen.shadowplay close")'
+  ].join("\n")
+}
