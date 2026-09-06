@@ -9,7 +9,8 @@ fake_cli="$root/tests/fake-gsr-cli"
 chmod +x "$helper" "$fake_gsr" "$fake_cli"
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+session_pid=""
+trap 'rm -rf "$work"; if [[ -n ${session_pid:-} ]]; then kill "$session_pid" 2>/dev/null || true; wait "$session_pid" 2>/dev/null || true; fi' EXIT
 
 export HOME="$work/home"
 export XDG_CONFIG_HOME="$work/config"
@@ -34,6 +35,9 @@ assert_file_contains() {
   local file="$1" needle="$2"
   grep -F -- "$needle" "$file" >/dev/null || fail "$file did not contain: $needle"
 }
+
+grep -F "exec -a omarchy-shadowplay-gsr" "$helper" >/dev/null \
+  || fail "helper must launch the recorder as omarchy-shadowplay-gsr"
 
 "$helper" start >/dev/null
 [[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "start did not launch the recorder"
@@ -111,4 +115,34 @@ echo "$status" | jq -e '.mode == "monitor" and .running == true and .seconds == 
   || fail "omitted keys should still default Monitor Mode: $status"
 "$helper" stop
 
+# Busy KMS: a stock session recorder owns capture. Start must fail without signaling it.
+rm -f "$SHADOWPLAY_FAKE_DIR/session.killed" "$SHADOWPLAY_FAKE_DIR/running"
+setsid bash -c '
+  trap "echo killed > \"$SHADOWPLAY_FAKE_DIR/session.killed\"; exit 1" INT TERM
+  echo $$ > "$SHADOWPLAY_FAKE_DIR/session.pid"
+  echo $$ > "$SHADOWPLAY_FAKE_DIR/session-recording"
+  exec -a gpu-screen-recorder sleep 30
+' &
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  [[ -r $SHADOWPLAY_FAKE_DIR/session.pid ]] && break
+  sleep 0.05
+done
+[[ -r $SHADOWPLAY_FAKE_DIR/session.pid ]] || fail "session recorder fake did not start"
+session_pid=$(<"$SHADOWPLAY_FAKE_DIR/session.pid")
+kill -0 "$session_pid" 2>/dev/null || fail "session recorder pid is not alive"
+
+if "$helper" start >/dev/null 2>"$work/busy-err"; then
+  fail "start succeeded while a Session Recording was running"
+fi
+grep -qiE 'busy|Session Recording' "$work/busy-err" || fail "busy error was unclear: $(<"$work/busy-err")"
+[[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "start launched the replay buffer while KMS was busy"
+[[ ! -e $SHADOWPLAY_FAKE_DIR/session.killed ]] || fail "start signaled the stock session recorder"
+kill -0 "$session_pid" 2>/dev/null || fail "stock session recorder was killed"
+if grep -E 'pkill|killall' "$helper" | grep -q 'gpu-screen-recorder'; then
+  fail "helper must not pkill/killall gpu-screen-recorder"
+fi
+
+kill "$session_pid" 2>/dev/null || true
+wait "$session_pid" 2>/dev/null || true
+session_pid=""
 echo OK

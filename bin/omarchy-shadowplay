@@ -379,6 +379,33 @@ buffer_running() {
   cli_running
 }
 
+# Stock Omarchy screenrecord matches argv0 gpu-screen-recorder. Never signal those PIDs.
+session_recording_pids() {
+  local fake="${SHADOWPLAY_FAKE_DIR:-}"
+  if [[ -n $fake ]]; then
+    if [[ -r $fake/session-recording ]]; then
+      cat "$fake/session-recording"
+    fi
+    return 0
+  fi
+  pgrep -f '^gpu-screen-recorder' 2>/dev/null || true
+}
+
+capture_device_busy() {
+  local pids
+  pids=$(session_recording_pids)
+  [[ -n $pids ]]
+}
+
+die_device_busy() {
+  local extra="${1:-}"
+  local message="capture device is busy: a Session Recording is running"
+  if [[ -n $extra ]]; then
+    die "$message"$'\n'"$extra"
+  fi
+  die "$message"
+}
+
 list_monitor_lines() {
   "$GSR_BIN" --list-monitors 2>/dev/null || true
 }
@@ -496,6 +523,11 @@ apply_start_flags() {
   done
 }
 
+log_looks_busy() {
+  local log="$1"
+  grep -qiE 'busy|kms.*(in use|busy)|device.*(busy|in use)|already.*(captur|record)' <<<"$log"
+}
+
 cmd_start() {
   load_config
   apply_start_flags "$@"
@@ -507,7 +539,11 @@ cmd_start() {
   command -v "$GSR_BIN" >/dev/null 2>&1 || die "gpu-screen-recorder is not installed"
   command -v "$GSR_CLI_BIN" >/dev/null 2>&1 || die "gsr-cli is not installed"
 
-  local monitor seconds audio out dir
+  if capture_device_busy; then
+    die_device_busy
+  fi
+
+  local monitor seconds audio dir
   monitor=$(resolve_monitor)
   seconds=$CONFIG_SECONDS
   audio=$CONFIG_AUDIO
@@ -547,7 +583,14 @@ cmd_start() {
   if ! wait_until_running "$pid"; then
     local log
     log=$(tail -n 20 "$LOG_FILE" 2>/dev/null || true)
+    if [[ -n $pid ]] && pid_alive "$pid"; then
+      kill -INT "$pid" 2>/dev/null || true
+      wait_until_stopped "$pid" || true
+    fi
     rm -f "$PID_FILE"
+    if capture_device_busy || log_looks_busy "$log"; then
+      die_device_busy "$log"
+    fi
     if [[ -n $log ]]; then
       die "replay buffer failed to start"$'\n'"$log"
     fi
@@ -795,6 +838,12 @@ cmd_doctor() {
     printf 'running\n'
   else
     printf 'stopped\n'
+  fi
+  printf 'session recording: '
+  if capture_device_busy; then
+    printf 'running (capture device busy)\n'
+  else
+    printf 'not detected\n'
   fi
   [[ $ok == true ]]
 }
