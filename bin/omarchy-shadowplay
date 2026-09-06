@@ -268,6 +268,7 @@ notify() {
 
 load_config() {
   local key value
+  local have_capture_extent=false
   reset_config_defaults
 
   [[ -r $CONFIG_FILE ]] || return 0
@@ -288,7 +289,10 @@ load_config() {
       [[ $value == all || $value == allowlist || $value == denylist ]] && CONFIG_FILTER="$value"
       ;;
     captureExtent)
-      [[ $value == monitor || $value == window ]] && CONFIG_CAPTURE_EXTENT="$value"
+      if [[ $value == monitor || $value == window ]]; then
+        CONFIG_CAPTURE_EXTENT="$value"
+        have_capture_extent=true
+      fi
       ;;
     codec)
       config_value_safe "$value" && [[ -n $value ]] && CONFIG_CODEC="$value"
@@ -326,6 +330,9 @@ load_config() {
   done < "$CONFIG_FILE"
   if [[ ${BLACKLIST_PRESENT:-false} != true ]]; then
     CONFIG_BLACKLIST="$DEFAULT_BLACKLIST"
+  fi
+  if [[ $CONFIG_MODE == follow && $have_capture_extent != true ]]; then
+    CONFIG_CAPTURE_EXTENT=window
   fi
   clamp_seconds
   clamp_fps
@@ -647,6 +654,7 @@ write_activity() {
   local subject_class="${8:-}"
   local subject_address="${9:-}"
   local linger_until="${10:-}"
+  local crop="${11:-}"
   local tmp="$STATE_DIR/.activity.$$"
   if [[ -z $phase ]]; then
     phase=$(activity_value phase)
@@ -677,6 +685,12 @@ write_activity() {
   elif [[ $linger_until == "-" ]]; then
     linger_until=""
   fi
+  if [[ -z $crop ]]; then
+    crop=$(activity_value crop)
+  elif [[ $crop == "-" ]]; then
+    crop="full"
+  fi
+  [[ -n $crop ]] || crop=full
   (umask 077
     {
       printf 'running=%s\n' "$running"
@@ -697,6 +711,7 @@ write_activity() {
       printf 'subject_class=%s\n' "$subject_class"
       printf 'subject_address=%s\n' "$subject_address"
       printf 'linger_until=%s\n' "$linger_until"
+      printf 'crop=%s\n' "$crop"
       printf 'region=%s\n' "$CONFIG_REGION"
     } > "$tmp"
   )
@@ -843,7 +858,10 @@ flush_segment() {
   fi
   audio=$(activity_value audio)
   [[ -n $audio ]] || audio=$CONFIG_AUDIO
-  printf '%s|%s|%s|%s\n' "$end" "$dest" "$duration" "$audio" >> "$SEGMENT_INDEX"
+  local crop
+  crop=$(activity_value crop)
+  [[ -n $crop ]] || crop=full
+  printf '%s|%s|%s|%s|%s\n' "$end" "$dest" "$duration" "$audio" "$crop" >> "$SEGMENT_INDEX"
   discard_old_segments
 }
 
@@ -990,19 +1008,39 @@ split_and_restart() {
   launch_recorder
 }
 
+segment_crop_filter() {
+  local spec="$1"
+  if [[ $spec =~ ^([0-9]+)x([0-9]+)\+(-?[0-9]+)\+(-?[0-9]+)$ ]]; then
+    printf 'crop=%s:%s:%s:%s,' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"
+  fi
+}
+
+live_crop_spec() {
+  local phase crop
+  phase=$(activity_value phase)
+  crop=$(activity_value crop)
+  if [[ $CONFIG_CAPTURE_EXTENT != window || $phase == linger ]]; then
+    printf 'full\n'
+    return
+  fi
+  [[ -n $crop ]] || crop=full
+  printf '%s\n' "$crop"
+}
+
 join_clip() {
   local live="$1"
   local out="$2"
   local window="${3:-$CONFIG_SECONDS}"
-  local now cutoff end path duration audio trim kept i canvas canvas_w canvas_h fc maps
-  local -a paths=() trims=() durs=() auds=()
+  local now cutoff end path duration audio crop trim kept i canvas canvas_w canvas_h fc maps cropf needs_ffmpeg
+  local -a paths=() trims=() durs=() auds=() crops=()
   now=$(now_epoch)
   cutoff=$((now - window))
   if [[ -r $SEGMENT_INDEX ]]; then
-    while IFS='|' read -r end path duration audio || [[ -n ${end:-} ]]; do
+    while IFS='|' read -r end path duration audio crop || [[ -n ${end:-} ]]; do
       [[ -n ${path:-} && -e $path ]] || continue
       [[ $duration =~ ^[0-9]+$ ]] || duration=$window
       [[ -n $audio ]] || audio=none
+      [[ -n $crop ]] || crop=full
       (( duration > 0 )) || continue
       trim=0
       if (( end - duration < cutoff )); then
@@ -1016,21 +1054,28 @@ join_clip() {
       trims+=("$trim")
       durs+=("$kept")
       auds+=("$audio")
+      crops+=("$crop")
     done < "$SEGMENT_INDEX"
   fi
   paths+=("$live")
   trims+=(0)
   durs+=("$window")
   auds+=("$CONFIG_AUDIO")
-  if (( ${#paths[@]} <= 1 )); then
+  crops+=("$(live_crop_spec)")
+  needs_ffmpeg=0
+  (( ${#paths[@]} > 1 )) && needs_ffmpeg=1
+  for crop in "${crops[@]}"; do
+    if [[ $crop != full && -n $crop ]]; then
+      needs_ffmpeg=1
+      break
+    fi
+  done
+  if (( needs_ffmpeg == 0 )); then
     mv -f "$live" "$out" || { cp -f "$live" "$out" && rm -f "$live"; }
     printf '%s\n' "$out"
     return
   fi
   command -v "$FFMPEG_BIN" >/dev/null 2>&1 || die "ffmpeg is not installed"
-  canvas=$(join_canvas)
-  canvas_w=${canvas%%x*}
-  canvas_h=${canvas#*x}
   local keep_audio=0
   for audio in "${auds[@]}"; do
     if [[ $audio != none ]]; then
@@ -1038,10 +1083,35 @@ join_clip() {
       break
     fi
   done
+  if (( ${#paths[@]} == 1 )); then
+    cropf=$(segment_crop_filter "${crops[0]}")
+    cropf=${cropf%,}
+    local -a ff_single=(-hide_banner -loglevel error -y)
+    if (( ${trims[0]} > 0 )); then
+      ff_single+=(-ss "${trims[0]}")
+    fi
+    ff_single+=(-i "${paths[0]}")
+    if [[ -n $cropf ]]; then
+      ff_single+=(-vf "$cropf")
+    fi
+    if (( keep_audio )); then
+      ff_single+=(-c:v libx264 -preset veryfast -crf 18 -c:a aac -b:a 192k "$out")
+    else
+      ff_single+=(-c:v libx264 -preset veryfast -crf 18 -an "$out")
+    fi
+    "$FFMPEG_BIN" "${ff_single[@]}" || die "failed to join replay segments"
+    rm -f "$live"
+    printf '%s\n' "$out"
+    return
+  fi
+  canvas=$(join_canvas)
+  canvas_w=${canvas%%x*}
+  canvas_h=${canvas#*x}
   fc=""
   maps=""
   for i in "${!paths[@]}"; do
-    fc+="[$i:v]scale=${canvas_w}:${canvas_h}:force_original_aspect_ratio=decrease,pad=${canvas_w}:${canvas_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=60,format=yuv420p[v$i];"
+    cropf=$(segment_crop_filter "${crops[$i]}")
+    fc+="[$i:v]${cropf}scale=${canvas_w}:${canvas_h}:force_original_aspect_ratio=decrease,pad=${canvas_w}:${canvas_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=60,format=yuv420p[v$i];"
     maps+="[v$i]"
     if (( keep_audio )); then
       if [[ ${auds[$i]} != none ]]; then
@@ -1240,14 +1310,37 @@ for item in clients:
     if focus and address == focus:
         focused = True
     title = str(item.get("title") or item.get("initialTitle") or "")
-    rows.append((klass, initial, monitor, address, focused, hist if isinstance(hist, int) else 10**9, title))
+    at = item.get("at") or item.get("at_")
+    size = item.get("size")
+    atx = aty = ww = hh = ""
+    if isinstance(at, (list, tuple)) and len(at) >= 2:
+        atx, aty = str(at[0]), str(at[1])
+    elif isinstance(at, str) and "," in at:
+        atx, aty = at.split(",", 1)
+    if isinstance(size, (list, tuple)) and len(size) >= 2:
+        ww, hh = str(size[0]), str(size[1])
+    elif isinstance(size, str) and "x" in size:
+        ww, hh = size.split("x", 1)
+    if item.get("x") is not None:
+        atx = str(item.get("x"))
+    if item.get("y") is not None:
+        aty = str(item.get("y"))
+    if item.get("w") is not None:
+        ww = str(item.get("w"))
+    if item.get("width") is not None:
+        ww = str(item.get("width"))
+    if item.get("h") is not None:
+        hh = str(item.get("h"))
+    if item.get("height") is not None:
+        hh = str(item.get("height"))
+    rows.append((klass, initial, monitor, address, focused, hist if isinstance(hist, int) else 10**9, title, atx, aty, ww, hh))
 if not any(r[4] for r in rows):
     with_hist = [r for r in rows if r[5] != 10**9]
     if with_hist:
         winner = min(with_hist, key=lambda r: r[5])
         rows = [r[:4] + (r is winner,) + r[5:] for r in rows]
-for klass, initial, monitor, address, focused, _hist, title in rows:
-    print("|".join([klass.replace("|"," "), initial.replace("|"," "), monitor.replace("|"," "), address.replace("|"," "), "1" if focused else "0", title.replace("|"," ")]))
+for klass, initial, monitor, address, focused, _hist, title, atx, aty, ww, hh in rows:
+    print("|".join([klass.replace("|"," "), initial.replace("|"," "), monitor.replace("|"," "), address.replace("|"," "), "1" if focused else "0", title.replace("|"," "), atx.replace("|"," "), aty.replace("|"," "), ww.replace("|"," "), hh.replace("|"," ")]))
 '
 }
 
@@ -1320,13 +1413,65 @@ go_live_on() {
     launch_recorder
   fi
   CONFIG_MONITOR="$saved"
-  write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$address" "-"
+  write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$address" "-" "$(window_crop_spec "$address" "$class" "$monitor")"
+}
+
+window_crop_spec() {
+  local address="$1" class="$2" monitor="$3"
+  local line klass mon addr atx aty ww hh mx my mw mh relx rely
+  if [[ $CONFIG_CAPTURE_EXTENT != window ]]; then
+    printf 'full\n'
+    return
+  fi
+  line=""
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    IFS='|' read -r klass _ mon addr _ _ atx aty ww hh <<<"$line"
+    if [[ -n $address && $addr == "$address" ]]; then
+      break
+    fi
+    if [[ -z $address && $klass == "$class" && ( -z $monitor || $mon == "$monitor" ) ]]; then
+      break
+    fi
+    line=""
+  done < <(parse_windows)
+  [[ -n $line ]] || { printf 'full\n'; return; }
+  mx=""; my=""; mw=""; mh=""
+  while IFS='|' read -r name w h x y; do
+    [[ $name == "$mon" ]] || continue
+    mw=$w; mh=$h; mx=$x; my=$y
+    break
+  done < <(monitor_geometry_lines)
+  [[ $ww =~ ^[0-9]+$ && $hh =~ ^[0-9]+$ ]] || { printf 'full\n'; return; }
+  relx=0
+  rely=0
+  if [[ $atx =~ ^-?[0-9]+$ && $mx =~ ^-?[0-9]+$ ]]; then
+    relx=$((atx - mx))
+  fi
+  if [[ $aty =~ ^-?[0-9]+$ && $my =~ ^-?[0-9]+$ ]]; then
+    rely=$((aty - my))
+  fi
+  if (( relx < 0 )); then relx=0; fi
+  if (( rely < 0 )); then rely=0; fi
+  if [[ $mw =~ ^[0-9]+$ && $mh =~ ^[0-9]+$ ]]; then
+    if (( relx + ww > mw )); then ww=$((mw - relx)); fi
+    if (( rely + hh > mh )); then hh=$((mh - rely)); fi
+    if (( ww <= 0 || hh <= 0 )); then
+      printf 'full\n'
+      return
+    fi
+    if (( ww >= mw && hh >= mh && relx == 0 && rely == 0 )); then
+      printf 'full\n'
+      return
+    fi
+  fi
+  printf '%sx%s+%s+%s\n' "$ww" "$hh" "$relx" "$rely"
 }
 
 enter_linger() {
   local until
   until=$(( $(now_epoch) + CONFIG_SECONDS ))
-  write_activity true "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" linger "$(activity_value subject_class)" "$(activity_value subject_address)" "$until"
+  write_activity true "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" linger "$(activity_value subject_class)" "$(activity_value subject_address)" "$until" full
 }
 
 cmd_follow_tick() {
@@ -1363,12 +1508,12 @@ cmd_follow_tick() {
   adopt_follow_subject() {
     local tgt_mon="$1" tgt_class="$2" tgt_addr="$3"
     if [[ $phase == linger && $tgt_class == "$subject_class" && $tgt_mon == "$monitor" ]]; then
-      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$tgt_class" "$tgt_addr" "-"
+      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$tgt_class" "$tgt_addr" "-" "$(window_crop_spec "$tgt_addr" "$tgt_class" "$tgt_mon")"
       return 0
     fi
     if [[ $phase == live || $phase == linger ]]; then
       if [[ $tgt_mon == "$monitor" ]]; then
-        write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$tgt_class" "$tgt_addr" "-"
+        write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$tgt_class" "$tgt_addr" "-" "$(window_crop_spec "$tgt_addr" "$tgt_class" "$tgt_mon")"
         return 0
       fi
     fi
@@ -1383,7 +1528,9 @@ cmd_follow_tick() {
   # Glance at a non-match: Sticky while the last Subject still matches.
   if [[ $subject_alive == true ]] && window_allowed "$subject_class" "$subject_initial"; then
     if [[ $phase == linger ]]; then
-      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$subject_class" "$subject_address" "-"
+      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$subject_class" "$subject_address" "-" "$(window_crop_spec "$subject_address" "$subject_class" "$monitor")"
+    elif [[ $phase == live ]]; then
+      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$subject_class" "$subject_address" "-" "$(window_crop_spec "$subject_address" "$subject_class" "$monitor")"
     fi
     return 0
   fi
@@ -1690,6 +1837,9 @@ cmd_settings_set() {
   mode)
     [[ $value == monitor || $value == follow || $value == pin || $value == region ]] || die "mode must be monitor, follow, pin, or region"
     CONFIG_MODE="$value"
+    if [[ $value == follow && $prev_mode != follow ]]; then
+      CONFIG_CAPTURE_EXTENT=window
+    fi
     ;;
   filter)
     [[ $value == all || $value == allowlist || $value == denylist ]] || die "filter must be all, allowlist, or denylist"
@@ -1781,7 +1931,7 @@ cmd_settings_set() {
       CONFIG_MONITOR="$monitor"
       split_and_restart
       CONFIG_MONITOR="$saved"
-      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(now_epoch)" "$(activity_value phase)" "$(activity_value subject_class)" "$(activity_value subject_address)" "$(activity_value linger_until)"
+      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(now_epoch)" "$(activity_value phase)" "$(activity_value subject_class)" "$(activity_value subject_address)" "$(activity_value linger_until)" "$(window_crop_spec "$(activity_value subject_address)" "$(activity_value subject_class)" "$monitor")"
     fi
     cmd_follow_tick
   elif buffer_running; then

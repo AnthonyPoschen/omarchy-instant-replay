@@ -317,6 +317,13 @@ function filterOptions() {
   ]
 }
 
+function captureExtentOptions() {
+  return [
+    { value: "window", label: "Window" },
+    { value: "monitor", label: "Monitor" }
+  ]
+}
+
 function hotkeyLuaSnippet() {
   return [
     'o.bind("SUPER + ALT + R", "Save replay", "omarchy-shell io.github.anthonyposchen.shadowplay save")',
