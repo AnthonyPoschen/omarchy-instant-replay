@@ -35,6 +35,11 @@ BarWidget {
   function stop() { if (panelLoader.item) panelLoader.item.stopBuffer() }
   function closeForPopoutSwitch() { if (panelLoader.item) panelLoader.item.closeForPopoutSwitch() }
 
+  function primaryAction() {
+    if (root.running) root.save()
+    else root.start()
+  }
+
   onBarChanged: injectPanel()
   onSettingsChanged: injectPanel()
 
@@ -68,7 +73,7 @@ BarWidget {
     bar: root.bar
     text: "󰑋"
     opacity: root.running ? 1.0 : 0.48
-    tooltipText: root.running ? "Save replay" : "ShadowPlay"
+    tooltipText: root.running ? "Save replay" : "Start replay buffer"
 
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.MiddleButton) {
@@ -79,8 +84,7 @@ BarWidget {
         root.toggle()
         return
       }
-      if (root.running) root.save()
-      else root.toggle()
+      root.primaryAction()
     }
   }
 }
