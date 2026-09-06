@@ -35,6 +35,7 @@ function parseStatus(text) {
     linger: status.linger === true || status.phase === "linger",
     subject: String(status.subject || ""),
     region: String(status.region || ""),
+    pinAddress: String(status.pinAddress || ""),
     mode: normalizeMode(status.mode),
     filter: normalizeFilter(status.filter),
     captureExtent: normalizeCaptureExtent(status.captureExtent),
@@ -305,6 +306,7 @@ function modeOptions() {
   return [
     { value: "monitor", label: "Monitor" },
     { value: "follow", label: "Follow active window" },
+    { value: "pin", label: "Pin window" },
     { value: "region", label: "Region" }
   ]
 }

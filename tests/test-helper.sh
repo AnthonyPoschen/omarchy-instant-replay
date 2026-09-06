@@ -7,8 +7,9 @@ fake_gsr="$root/tests/fake-gsr"
 fake_cli="$root/tests/fake-gsr-cli"
 fake_ffmpeg="$root/tests/fake-ffmpeg"
 fake_slurp="$root/tests/fake-slurp"
+fake_window="$root/tests/fake-window-picker"
 
-chmod +x "$helper" "$fake_gsr" "$fake_cli" "$fake_ffmpeg" "$fake_slurp"
+chmod +x "$helper" "$fake_gsr" "$fake_cli" "$fake_ffmpeg" "$fake_slurp" "$fake_window"
 
 work=$(mktemp -d)
 session_pid=""
@@ -44,6 +45,8 @@ grep -F "exec -a omarchy-shadowplay-gsr" "$helper" >/dev/null \
   || fail "helper must launch the recorder as omarchy-shadowplay-gsr"
 grep -F "omarchy-capture-region" "$helper" >/dev/null \
   || fail "helper must use Omarchy's region picker"
+grep -F "omarchy-menu-select" "$helper" >/dev/null \
+  || fail "helper must use Omarchy's window picker"
 
 replay_dir="$XDG_VIDEOS_DIR/Replays"
 segment_index="$XDG_STATE_HOME/omarchy-shadowplay/segments/index"
@@ -673,4 +676,69 @@ echo "$status" | jq -e '.running == true and .subject == "steam" and .monitor ==
   || fail "priority should pick earlier Match List rule when none focused: $status"
 
 "$helper" stop
+
+# Pin Mode: window picker, glance does not follow, move-output Split.
+export SHADOWPLAY_NOW=10000
+rm -rf "$replay_dir"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+export SHADOWPLAY_WINDOW_PICKER="$fake_window"
+export SHADOWPLAY_PICKED_WINDOW="0xff"
+"$helper" stop >/dev/null 2>&1 || true
+"$helper" settings set mode pin >/dev/null
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.mode == "pin" and .captureExtent == "window"' >/dev/null \
+  || fail "Pin Mode should force Window extent: $settings"
+"$helper" pick-window >/dev/null
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.mode == "pin" and .pinAddress == "0xff"' >/dev/null \
+  || fail "pick-window did not persist pin target: $settings"
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
+export SHADOWPLAY_NOW=10000
+"$helper" start >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.mode == "pin" and .running == true and .phase == "live" and .monitor == "DP-1" and .subject == "firefox" and .pinAddress == "0xff" and .captureExtent == "window"' >/dev/null \
+  || fail "pin start should follow only the pinned window: $status"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "DP-1"
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"discord","monitor":"DP-1","address":"0xdc","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "DP-1" and .subject == "firefox"' >/dev/null \
+  || fail "glance should not retarget Pin: $status"
+[[ ! -r $segment_index ]] || fail "Pin glance Split the buffer"
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"kitty","monitor":"HDMI-A-1","address":"0xkit","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "DP-1" and .subject == "firefox"' >/dev/null \
+  || fail "glance on another output should not retarget Pin: $status"
+[[ ! -r $segment_index ]] || fail "Pin other-output glance Split the buffer"
+
+"$helper" settings set captureExtent monitor >/dev/null
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.mode == "pin" and .captureExtent == "window"' >/dev/null \
+  || fail "Pin Mode must stay Window extent: $settings"
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"kitty","monitor":"DP-1","address":"0xkit","focused":true}]'
+"$helper" settings set pinAddress 0xkit >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.subject == "kitty" and .monitor == "DP-1" and .pinAddress == "0xkit"' >/dev/null \
+  || fail "Pin retarget same output should not Split: $status"
+segment_count=$(grep -c . "$segment_index" 2>/dev/null || true)
+[[ ${segment_count:-0} == 0 ]] || fail "Pin target change on same output Split, got $segment_count"
+
+"$helper" settings set pinAddress 0xff >/dev/null
+write_windows '[{"class":"firefox","monitor":"HDMI-A-1","address":"0xff","focused":false},{"class":"discord","monitor":"DP-1","address":"0xdc","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "HDMI-A-1" and .subject == "firefox"' >/dev/null \
+  || fail "pinned window moving output should Split: $status"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "HDMI-A-1"
+[[ -r $segment_index ]] || fail "Pin move-output Split did not keep a Segment"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list"
+clip=$("$helper" save)
+[[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Pin Split Save did not stitch one Clip"
+[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 2 ]] || fail "Pin Split Save should join Segment + live"
+[[ -e $clip ]] || fail "Pin Split Clip missing"
+assert_no_gsr_leftovers
+"$helper" stop
+
 echo OK
