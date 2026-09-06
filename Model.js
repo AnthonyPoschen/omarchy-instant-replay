@@ -111,13 +111,51 @@ function normalizeBitrateMode(value) {
 }
 
 function stringList(value) {
+  if (typeof value === "string") {
+    if (!value) return []
+    value = value.split(",")
+  }
   if (!Array.isArray(value)) return []
   var out = []
   for (var i = 0; i < value.length; i++) {
-    var item = String(value[i] || "")
+    var item = String(value[i] || "").trim()
     if (item) out.push(item)
   }
   return out
+}
+
+function defaultBlacklist() {
+  return ["waybar", "walker", "hyprlock"]
+}
+
+function encodeList(value) {
+  return stringList(value).join(",")
+}
+
+function moveListItem(value, index, delta) {
+  var list = stringList(value)
+  var next = index + delta
+  if (index < 0 || index >= list.length || next < 0 || next >= list.length) return list
+  var item = list[index]
+  list[index] = list[next]
+  list[next] = item
+  return list
+}
+
+function replaceListItem(value, index, text) {
+  var list = stringList(value)
+  var item = String(text || "").trim()
+  if (index < 0 || index >= list.length) return list
+  if (!item) list.splice(index, 1)
+  else list[index] = item
+  return list
+}
+
+function appendListItem(value, text) {
+  var list = stringList(value)
+  var item = String(text || "").trim()
+  if (item) list.push(item)
+  return list
 }
 
 function monitorOptions(monitors) {

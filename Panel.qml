@@ -26,6 +26,7 @@ Panel {
   property bool extrasHotkeysOpen: false
   property string hotkeyCopyStatus: ""
   property string clipCopyStatus: ""
+  property bool blacklistFieldFocused: false
 
   readonly property var barIdentity: hostWidget || root
   readonly property bool running: status.running === true
@@ -56,6 +57,15 @@ Panel {
   readonly property var qualityChoices: Model.qualityOptions()
   readonly property var framerateModeChoices: Model.framerateModeOptions()
   readonly property var bitrateModeChoices: Model.bitrateModeOptions()
+  readonly property string configuredFilter: Model.normalizeFilter(setting("filter", "all"))
+  readonly property var configuredBlacklist: {
+    var stored = setting("blacklist", undefined)
+    if (stored !== undefined && stored !== null)
+      return Model.stringList(stored)
+    if (root.status && root.status.blacklist !== undefined && root.status.blacklist !== null)
+      return Model.stringList(root.status.blacklist)
+    return Model.defaultBlacklist()
+  }
 
   function open() {
     root.refresh()
@@ -95,6 +105,16 @@ Panel {
     root.busy = true
     root.lastError = ""
     actionProc.command = root.runHelper(["settings", "set", key, String(value)])
+    actionProc.running = true
+  }
+
+  function applyBlacklist(list) {
+    var encoded = Model.encodeList(list)
+    root.persistSettings({ blacklist: encoded })
+    if (root.helperPath === "" || actionProc.running) return
+    root.busy = true
+    root.lastError = ""
+    actionProc.command = root.runHelper(["settings", "set", "blacklist", encoded])
     actionProc.running = true
   }
 
@@ -286,7 +306,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: monitorDropdown.popupOpen || secondsDropdown.popupOpen || audioDropdown.popupOpen || modeDropdown.popupOpen || codecDropdown.popupOpen || fpsDropdown.popupOpen || qualityDropdown.popupOpen || framerateDropdown.popupOpen || bitrateDropdown.popupOpen
+      blocked: monitorDropdown.popupOpen || secondsDropdown.popupOpen || audioDropdown.popupOpen || modeDropdown.popupOpen || filterDropdown.popupOpen || codecDropdown.popupOpen || fpsDropdown.popupOpen || qualityDropdown.popupOpen || framerateDropdown.popupOpen || bitrateDropdown.popupOpen || blacklistAddField.activeFocus || root.blacklistFieldFocused
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -377,6 +397,100 @@ Panel {
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onChanged: function(value) { root.applySetting("filter", Model.normalizeFilter(value)) }
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(6)
+          visible: root.configuredMode === "follow" && root.configuredFilter === "denylist"
+          height: visible ? implicitHeight : 0
+
+          Text {
+            text: "Blacklist"
+            color: Qt.darker(root.contentForeground, 1.4)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+
+          Repeater {
+            model: root.configuredBlacklist
+            delegate: Row {
+              width: parent.width
+              spacing: Style.space(6)
+
+              TextField {
+                width: parent.width - 3 * 36 - 3 * parent.spacing
+                text: modelData
+                foreground: root.contentForeground
+                onActiveFocusChanged: root.blacklistFieldFocused = activeFocus
+                onEditingFinished: {
+                  if (text === modelData) return
+                  root.applyBlacklist(Model.replaceListItem(root.configuredBlacklist, index, text))
+                }
+              }
+
+              Button {
+                width: 36
+                text: "↑"
+                enabled: !root.busy && index > 0
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+                onClicked: root.applyBlacklist(Model.moveListItem(root.configuredBlacklist, index, -1))
+              }
+
+              Button {
+                width: 36
+                text: "↓"
+                enabled: !root.busy && index < root.configuredBlacklist.length - 1
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+                onClicked: root.applyBlacklist(Model.moveListItem(root.configuredBlacklist, index, 1))
+              }
+
+              Button {
+                width: 36
+                text: "×"
+                enabled: !root.busy
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+                onClicked: root.applyBlacklist(Model.replaceListItem(root.configuredBlacklist, index, ""))
+              }
+            }
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            TextField {
+              id: blacklistAddField
+              width: parent.width - addBlacklistButton.width - parent.spacing
+              placeholderText: "class or regex"
+              foreground: root.contentForeground
+            }
+
+            Button {
+              id: addBlacklistButton
+              text: "Add"
+              enabled: !root.busy
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: {
+                root.applyBlacklist(Model.appendListItem(root.configuredBlacklist, blacklistAddField.text))
+                blacklistAddField.text = ""
+              }
+            }
+          }
+
+          Button {
+            width: parent.width
+            text: "Empty blacklist"
+            enabled: !root.busy && root.configuredBlacklist.length > 0
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.applyBlacklist([])
+          }
         }
 
         Dropdown {
@@ -574,6 +688,16 @@ Panel {
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onToggled: root.extrasListsOpen = !root.extrasListsOpen
+
+          Text {
+            visible: root.configuredMode === "follow" && root.configuredFilter === "denylist"
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "Blacklist is shown with Filter=Denylist. Emptying it follows chrome that Filter=All still skips."
+            color: Qt.darker(root.contentForeground, 1.3)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+          }
         }
 
         ExtraGroup {
