@@ -27,3 +27,17 @@ process. Still assume only one KMS capture can run at a time.
 `tests/test-helper.sh` is the contract for start/save/stop/monitor
 selection. It uses the fakes in `tests/`. Do not call a real GPU encoder
 from unit tests.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on AnthonyPoschen/omarchy-shadowplay, via `gh`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default roles: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` at the root and `docs/adr/`. See `docs/agents/domain.md`.
