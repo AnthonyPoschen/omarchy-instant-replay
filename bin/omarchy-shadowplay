@@ -14,9 +14,12 @@ CONFIG_FILE="$CONFIG_DIR/config"
 PID_FILE="$STATE_DIR/recorder.pid"
 ACTIVITY_FILE="$STATE_DIR/activity"
 LOG_FILE="$STATE_DIR/gsr.log"
+SEGMENT_DIR="$STATE_DIR/segments"
+SEGMENT_INDEX="$SEGMENT_DIR/index"
 
 GSR_BIN="${SHADOWPLAY_GSR_BIN:-gpu-screen-recorder}"
 GSR_CLI_BIN="${SHADOWPLAY_GSR_CLI_BIN:-gsr-cli}"
+FFMPEG_BIN="${SHADOWPLAY_FFMPEG_BIN:-ffmpeg}"
 FOCUSED_MONITOR_BIN="${SHADOWPLAY_FOCUSED_MONITOR_BIN:-omarchy-hyprland-monitor-focused}"
 
 DEFAULT_SECONDS=60
@@ -75,8 +78,9 @@ runtime_base() {
 RUNTIME_BASE="$(runtime_base)"
 RUNTIME_DIR="$RUNTIME_BASE/omarchy-shadowplay"
 IPC="$RUNTIME_DIR/gsr.sock"
-(umask 077; mkdir -p "$RUNTIME_DIR" "$STATE_DIR" "$CONFIG_DIR")
-chmod 700 "$RUNTIME_DIR" "$STATE_DIR" "$CONFIG_DIR"
+GSR_OUTPUT_DIR="$RUNTIME_DIR/gsr-output"
+(umask 077; mkdir -p "$RUNTIME_DIR" "$STATE_DIR" "$CONFIG_DIR" "$SEGMENT_DIR" "$GSR_OUTPUT_DIR")
+chmod 700 "$RUNTIME_DIR" "$STATE_DIR" "$CONFIG_DIR" "$SEGMENT_DIR" "$GSR_OUTPUT_DIR"
 
 usage() {
   cat <<USAGE
@@ -107,7 +111,8 @@ Start a GPU Screen Recorder instant-replay buffer on one monitor, then save
 the last N seconds without stopping the buffer.
 
 An empty monitor setting captures whichever monitor is focused when start runs.
-Changing the monitor later restarts the buffer.
+Changing the Buffer Target while Live flushes a Segment and restarts capture.
+Save joins overlapping Segments with the live buffer into one Clip.
 
 This process is launched as $PROCESS_NAME so Omarchy's stock screen recorder
 does not treat it as a session recording. Only one KMS capture can run at a
@@ -209,6 +214,10 @@ reset_config_defaults() {
 
 config_value_safe() {
   [[ $1 != *$'\n'* && $1 != *$'\r'* ]]
+}
+
+now_epoch() {
+  printf '%s\n' "${SHADOWPLAY_NOW:-$(date +%s)}"
 }
 
 notify() {
@@ -528,14 +537,117 @@ log_looks_busy() {
   grep -qiE 'busy|kms.*(in use|busy)|device.*(busy|in use)|already.*(captur|record)' <<<"$log"
 }
 
-cmd_start() {
-  load_config
-  apply_start_flags "$@"
-  write_config
-  if buffer_running; then
-    cmd_status
+save_replay_path() {
+  local seconds="${1:-}"
+  local path=""
+  if [[ -n $seconds ]]; then
+    path=$("$GSR_CLI_BIN" -ipc "$IPC" save-replay "$seconds")
+  else
+    path=$("$GSR_CLI_BIN" -ipc "$IPC" save-replay)
+  fi
+  path=${path//$'\n'/}
+  [[ -n $path ]] || die "save-replay did not return a file path"
+  printf '%s\n' "$path"
+}
+
+write_segment_index() {
+  local tmp="$SEGMENT_DIR/.index.$$"
+  (umask 077
+    cat > "$tmp"
+  )
+  mv -f "$tmp" "$SEGMENT_INDEX"
+}
+
+discard_all_segments() {
+  rm -f "$SEGMENT_INDEX"
+  find "$SEGMENT_DIR" -mindepth 1 -maxdepth 1 ! -name index -delete 2>/dev/null || true
+}
+
+discard_old_segments() {
+  local window="${1:-$CONFIG_SECONDS}"
+  local now cutoff end path
+  now=$(now_epoch)
+  cutoff=$((now - window))
+  [[ -r $SEGMENT_INDEX ]] || return 0
+  local kept=""
+  while IFS='|' read -r end path || [[ -n ${end:-} ]]; do
+    [[ -n ${end:-} ]] || continue
+    if (( end < cutoff )); then
+      rm -f "$path"
+      continue
+    fi
+    kept+="${end}|${path}"$'\n'
+  done < "$SEGMENT_INDEX"
+  if [[ -n $kept ]]; then
+    printf '%s' "$kept" | write_segment_index
+  else
+    rm -f "$SEGMENT_INDEX"
+  fi
+}
+
+flush_segment() {
+  buffer_running || return 0
+  local src dest end
+  src=$(save_replay_path)
+  [[ -e $src ]] || die "save-replay did not create a segment file"
+  mkdir -p "$SEGMENT_DIR"
+  chmod 700 "$SEGMENT_DIR"
+  end=$(now_epoch)
+  dest=$(mktemp "$SEGMENT_DIR/seg-${end}-XXXXXX")
+  mv -f "$src" "$dest" || { cp -f "$src" "$dest" && rm -f "$src"; }
+  printf '%s|%s\n' "$end" "$dest" >> "$SEGMENT_INDEX"
+  discard_old_segments
+}
+
+join_canvas() {
+  local max_w=1920 max_h=1080 name size w h
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    size=${line#*|}
+    w=${size%%x*}
+    h=${size#*x}
+    [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ ]] || continue
+    if (( w > max_w )); then max_w=$w; fi
+    if (( h > max_h )); then max_h=$h; fi
+  done < <(list_monitor_lines)
+  printf '%sx%s\n' "$max_w" "$max_h"
+}
+
+live_capture_differs() {
+  local monitor="$1"
+  local live_monitor live_seconds live_audio
+  live_monitor=$(activity_value monitor)
+  live_seconds=$(activity_value seconds)
+  live_audio=$(activity_value audio)
+  [[ $live_monitor != "$monitor" ]] && return 0
+  [[ $live_seconds != "$CONFIG_SECONDS" ]] && return 0
+  [[ $live_audio != "$CONFIG_AUDIO" ]] && return 0
+  return 1
+}
+
+stop_recorder() {
+  local pid=""
+  pid=$(read_pid 2>/dev/null || true)
+  if [[ -z $pid ]] && ! cli_running; then
+    rm -f "$PID_FILE"
     return 0
   fi
+
+  if cli_running; then
+    "$GSR_CLI_BIN" -ipc "$IPC" stop >/dev/null 2>&1 || true
+  fi
+  if [[ -n $pid ]] && pid_alive "$pid"; then
+    kill -INT "$pid" 2>/dev/null || true
+  fi
+  if ! wait_until_stopped "$pid"; then
+    if [[ -n $pid ]] && pid_alive "$pid"; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$PID_FILE" "$IPC"
+}
+
+launch_recorder() {
   command -v "$GSR_BIN" >/dev/null 2>&1 || die "gpu-screen-recorder is not installed"
   command -v "$GSR_CLI_BIN" >/dev/null 2>&1 || die "gsr-cli is not installed"
 
@@ -543,12 +655,12 @@ cmd_start() {
     die_device_busy
   fi
 
-  local monitor seconds audio dir
+  local monitor seconds audio
   monitor=$(resolve_monitor)
   seconds=$CONFIG_SECONDS
   audio=$CONFIG_AUDIO
-  dir=$(output_dir)
-  mkdir -p "$dir"
+  mkdir -p "$GSR_OUTPUT_DIR"
+  chmod 700 "$GSR_OUTPUT_DIR"
 
   local -a gsr_args=(
     -w "$monitor"
@@ -561,7 +673,7 @@ cmd_start() {
     -replay-storage ram
     -fallback-cpu-encoding yes
     -ipc "$IPC"
-    -o "$dir"
+    -o "$GSR_OUTPUT_DIR"
   )
   if [[ $CONFIG_CURSOR == false ]]; then
     gsr_args+=(-cursor no)
@@ -599,30 +711,83 @@ cmd_start() {
 
   write_activity true "$monitor" "$seconds" "$audio" "$(activity_value last_clip)"
   notify "Replay buffer running" "$monitor · last ${seconds}s"
+}
+
+split_and_restart() {
+  flush_segment
+  stop_recorder
+  launch_recorder
+}
+
+join_clip() {
+  local live="$1"
+  local out="$2"
+  local -a inputs=()
+  local end path i canvas canvas_w canvas_h fc maps
+  if [[ -r $SEGMENT_INDEX ]]; then
+    while IFS='|' read -r end path || [[ -n ${end:-} ]]; do
+      [[ -n ${path:-} && -e $path ]] || continue
+      inputs+=("$path")
+    done < "$SEGMENT_INDEX"
+  fi
+  inputs+=("$live")
+  if (( ${#inputs[@]} <= 1 )); then
+    mv -f "$live" "$out" || { cp -f "$live" "$out" && rm -f "$live"; }
+    printf '%s\n' "$out"
+    return
+  fi
+  command -v "$FFMPEG_BIN" >/dev/null 2>&1 || die "ffmpeg is not installed"
+  canvas=$(join_canvas)
+  canvas_w=${canvas%%x*}
+  canvas_h=${canvas#*x}
+  local keep_audio=0
+  [[ $CONFIG_AUDIO != none ]] && keep_audio=1
+  fc=""
+  maps=""
+  for i in "${!inputs[@]}"; do
+    fc+="[$i:v]scale=${canvas_w}:${canvas_h}:force_original_aspect_ratio=decrease,pad=${canvas_w}:${canvas_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=60,format=yuv420p[v$i];"
+    maps+="[v$i]"
+    if (( keep_audio )); then
+      fc+="[$i:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[a$i];"
+      maps+="[a$i]"
+    fi
+  done
+  local -a ff_args=(-hide_banner -loglevel error -y)
+  for path in "${inputs[@]}"; do
+    ff_args+=(-i "$path")
+  done
+  if (( keep_audio )); then
+    fc+="${maps}concat=n=${#inputs[@]}:v=1:a=1[v][a]"
+    ff_args+=(-filter_complex "$fc" -map "[v]" -map "[a]" -c:v libx264 -preset veryfast -crf 18 -c:a aac -b:a 192k "$out")
+  else
+    fc+="${maps}concat=n=${#inputs[@]}:v=1:a=0[v]"
+    ff_args+=(-filter_complex "$fc" -map "[v]" -an -c:v libx264 -preset veryfast -crf 18 "$out")
+  fi
+  "$FFMPEG_BIN" "${ff_args[@]}" || die "failed to join replay segments"
+  rm -f "$live"
+  printf '%s\n' "$out"
+}
+
+cmd_start() {
+  load_config
+  apply_start_flags "$@"
+  write_config
+  local monitor
+  monitor=$(resolve_monitor)
+  if buffer_running; then
+    if live_capture_differs "$monitor"; then
+      split_and_restart
+    fi
+    cmd_status
+    return 0
+  fi
+  launch_recorder
   cmd_status
 }
 
 cmd_stop() {
-  local pid=""
-  pid=$(read_pid 2>/dev/null || true)
-  if [[ -z $pid ]] && ! cli_running; then
-    rm -f "$PID_FILE"
-    write_activity false "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$(activity_value last_clip)"
-    return 0
-  fi
-
-  if cli_running; then
-    "$GSR_CLI_BIN" -ipc "$IPC" stop >/dev/null 2>&1 || true
-  fi
-  if [[ -n $pid ]] && pid_alive "$pid"; then
-    kill -INT "$pid" 2>/dev/null || true
-  fi
-  if ! wait_until_stopped "$pid"; then
-    if [[ -n $pid ]] && pid_alive "$pid"; then
-      kill -KILL "$pid" 2>/dev/null || true
-    fi
-  fi
-  rm -f "$PID_FILE" "$IPC"
+  stop_recorder
+  discard_all_segments
   write_activity false "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$(activity_value last_clip)"
 }
 
@@ -630,16 +795,18 @@ cmd_save() {
   load_config
   buffer_running || die "replay buffer is not running"
   local seconds="${1:-}"
-  local path=""
   if [[ -n $seconds ]]; then
     [[ $seconds =~ ^[0-9]+$ ]] || die "seconds must be a positive integer"
     (( seconds > 0 )) || die "seconds must be a positive integer"
-    path=$("$GSR_CLI_BIN" -ipc "$IPC" save-replay "$seconds")
-  else
-    path=$("$GSR_CLI_BIN" -ipc "$IPC" save-replay)
   fi
-  path=${path//$'\n'/}
-  [[ -n $path ]] || die "save-replay did not return a file path"
+  discard_old_segments "${seconds:-$CONFIG_SECONDS}"
+  local live path dir stamp
+  live=$(save_replay_path "$seconds")
+  dir=$(output_dir)
+  mkdir -p "$dir"
+  stamp=$(now_epoch)
+  path=$(join_clip "$live" "$dir/Replay-${stamp}.mp4")
+  rm -f "$live"
   write_activity true "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$path"
   notify "Replay saved" "$path"
   printf '%s\n' "$path"
@@ -811,6 +978,13 @@ cmd_settings_set() {
     ;;
   esac
   write_config
+  if buffer_running; then
+    local monitor
+    monitor=$(resolve_monitor)
+    if live_capture_differs "$monitor"; then
+      split_and_restart
+    fi
+  fi
   cmd_settings_show --json
 }
 

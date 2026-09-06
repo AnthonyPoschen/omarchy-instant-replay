@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+FAKE_DIR="${SHADOWPLAY_FAKE_DIR:?SHADOWPLAY_FAKE_DIR is not set}"
+mkdir -p "$FAKE_DIR"
+
+printf '%s\n' "$@" > "$FAKE_DIR/ffmpeg.args"
+
+: > "$FAKE_DIR/concat.list"
+out=""
+prev=""
+for arg in "$@"; do
+  if [[ $prev == -i ]]; then
+    printf '%s\n' "$arg" >> "$FAKE_DIR/concat.list"
+  fi
+  prev="$arg"
+  out="$arg"
+done
+
+[[ -n $out ]] || exit 1
+: > "$out"
+printf '%s\n' "$out" > "$FAKE_DIR/concat.out"
