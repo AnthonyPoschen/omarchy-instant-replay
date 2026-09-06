@@ -5,7 +5,7 @@ import qs.Ui
 
 BarWidget {
   id: root
-  moduleName: "io.github.anthonyposchen.shadowplay"
+  moduleName: "io.github.anthonyposchen.instant-replay"
 
   property var hostWidget: null
   readonly property var barIdentity: hostWidget || root
@@ -13,7 +13,7 @@ BarWidget {
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
   readonly property bool running: panelLoader.item ? panelLoader.item.running === true : false
   readonly property int savingCount: panelLoader.item ? panelLoader.item.savingCount : 0
-  readonly property string helperPath: decodeURIComponent(String(Qt.resolvedUrl("bin/omarchy-shadowplay")).replace(/^file:\/\//, ""))
+  readonly property string helperPath: decodeURIComponent(String(Qt.resolvedUrl("bin/omarchy-instant-replay")).replace(/^file:\/\//, ""))
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -57,7 +57,7 @@ BarWidget {
   }
 
   IpcHandler {
-    target: "io.github.anthonyposchen.shadowplay"
+    target: "io.github.anthonyposchen.instant-replay"
     function refresh() { root.broadcast("refresh") }
     function open() { root.open() }
     function close() { root.close() }

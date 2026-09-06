@@ -1,4 +1,4 @@
-# ShadowPlay
+# Instant Replay
 
 Always-on instant replay for Omarchy. The user was not making a session recording; something worth keeping happened; one action writes the last N seconds to disk and the buffer keeps running.
 
@@ -69,7 +69,7 @@ No Subject. Dumb pin of one monitor: named connector, or focused output **at sta
 _Avoid_: Open Mode, simple start, follow focused output
 
 **Region Mode**:
-Dumb ShadowPlay on a fixed rectangle, from the region picker. No Subject, no Filter, no smart swapping. The rectangle is persisted and must sit on one monitor. Re-picking while live is a Split. Not the same Settings control as Pin. Fullscreen-window capture is Pin or Follow with Window extent, not Region.
+Dumb pin of a fixed rectangle, from the region picker. No Subject, no Filter, no smart swapping. The rectangle is persisted and must sit on one monitor. Re-picking while live is a Split. Not the same Settings control as Pin. Fullscreen-window capture is Pin or Follow with Window extent, not Region.
 
 **Hotkey**:
 A Hyprland bind the user installs themselves. The plugin cannot write `bindings.lua`. Settings copies an `o.bind` lua snippet with Save live (`SUPER + ALT + R`) and start, stop, toggle, open, and close commented out. `show`, `hide`, and `refresh` stay out of that list. The README lists the same set, lua first, then hyprlang.

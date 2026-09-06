@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROGRAM="omarchy-shadowplay"
-PROCESS_NAME="omarchy-shadowplay-gsr"
+PROGRAM="omarchy-instant-replay"
+PROCESS_NAME="omarchy-instant-replay-gsr"
 VERSION="0.1.0"
 
 HOME="${HOME:?HOME is not set}"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
-CONFIG_DIR="$CONFIG_HOME/omarchy-shadowplay"
-STATE_DIR="$STATE_HOME/omarchy-shadowplay"
+CONFIG_DIR="$CONFIG_HOME/omarchy-instant-replay"
+STATE_DIR="$STATE_HOME/omarchy-instant-replay"
 CONFIG_FILE="$CONFIG_DIR/config"
 PID_FILE="$STATE_DIR/recorder.pid"
 ACTIVITY_FILE="$STATE_DIR/activity"
@@ -71,7 +71,7 @@ runtime_base() {
     return
   fi
 
-  candidate="${TMPDIR:-/tmp}/omarchy-shadowplay-runtime-$(id -u)"
+  candidate="${TMPDIR:-/tmp}/omarchy-instant-replay-runtime-$(id -u)"
   if [[ -L $candidate ]]; then
     die "unsafe runtime path is a symbolic link: $candidate"
   fi
@@ -87,9 +87,17 @@ runtime_base() {
 }
 
 RUNTIME_BASE="$(runtime_base)"
-RUNTIME_DIR="$RUNTIME_BASE/omarchy-shadowplay"
+RUNTIME_DIR="$RUNTIME_BASE/omarchy-instant-replay"
 IPC="$RUNTIME_DIR/gsr.sock"
 GSR_OUTPUT_DIR="$RUNTIME_DIR/gsr-output"
+if [[ ! -e $CONFIG_FILE && -r $CONFIG_HOME/omarchy-shadowplay/config ]]; then
+  mkdir -p "$CONFIG_DIR"
+  cp -a "$CONFIG_HOME/omarchy-shadowplay/config" "$CONFIG_FILE"
+fi
+if [[ ! -e $ACTIVITY_FILE && -d $STATE_HOME/omarchy-shadowplay ]]; then
+  mkdir -p "$STATE_DIR"
+  cp -a "$STATE_HOME/omarchy-shadowplay/." "$STATE_DIR/"
+fi
 (umask 077; mkdir -p "$RUNTIME_DIR" "$STATE_DIR" "$CONFIG_DIR" "$SEGMENT_DIR" "$SAVE_JOBS_DIR" "$GSR_OUTPUT_DIR")
 chmod 700 "$RUNTIME_DIR" "$STATE_DIR" "$CONFIG_DIR" "$SEGMENT_DIR" "$SAVE_JOBS_DIR" "$GSR_OUTPUT_DIR"
 
@@ -454,7 +462,7 @@ write_config() {
   blacklist_csv=${CONFIG_BLACKLIST//$'\n'/,}
   (umask 077
     {
-      printf '# omarchy-shadowplay configuration v1\n'
+      printf '# omarchy-instant-replay configuration v1\n'
       printf 'monitor=%s\n' "$CONFIG_MONITOR"
       printf 'seconds=%s\n' "$CONFIG_SECONDS"
       printf 'audio=%s\n' "$CONFIG_AUDIO"
@@ -1187,6 +1195,7 @@ our_recorder_pids() {
     return 0
   fi
   pgrep -f "^${PROCESS_NAME}( |$)" 2>/dev/null || true
+  pgrep -f '^omarchy-shadowplay-gsr( |$)' 2>/dev/null || true
 }
 
 stop_recorder() {
@@ -1291,7 +1300,7 @@ launch_recorder() {
   rm -f "$IPC"
   mkdir -p "$STATE_DIR"
   : > "$LOG_FILE"
-  bash -c 'exec -a omarchy-shadowplay-gsr "$0" "$@"' "$GSR_BIN" "${gsr_args[@]}" >>"$LOG_FILE" 2>&1 &
+  bash -c 'exec -a omarchy-instant-replay-gsr "$0" "$@"' "$GSR_BIN" "${gsr_args[@]}" >>"$LOG_FILE" 2>&1 &
   local pid=$!
   echo "$pid" > "$PID_FILE"
 

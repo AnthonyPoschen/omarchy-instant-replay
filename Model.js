@@ -377,11 +377,11 @@ function filterOptions() {
 
 function hotkeyLuaSnippet() {
   return [
-    'o.bind("SUPER + ALT + R", "Save replay", "omarchy-shell io.github.anthonyposchen.shadowplay save")',
-    '-- o.bind("SUPER + ALT + S", "Start replay buffer", "omarchy-shell io.github.anthonyposchen.shadowplay start")',
-    '-- o.bind("SUPER + ALT + X", "Stop replay buffer", "omarchy-shell io.github.anthonyposchen.shadowplay stop")',
-    '-- o.bind("SUPER + ALT + T", "Toggle ShadowPlay panel", "omarchy-shell io.github.anthonyposchen.shadowplay toggle")',
-    '-- o.bind("SUPER + ALT + O", "Open ShadowPlay", "omarchy-shell io.github.anthonyposchen.shadowplay open")',
-    '-- o.bind("SUPER + ALT + C", "Close ShadowPlay", "omarchy-shell io.github.anthonyposchen.shadowplay close")'
+    'o.bind("SUPER + ALT + R", "Save replay", "omarchy-shell io.github.anthonyposchen.instant-replay save")',
+    '-- o.bind("SUPER + ALT + S", "Start replay buffer", "omarchy-shell io.github.anthonyposchen.instant-replay start")',
+    '-- o.bind("SUPER + ALT + X", "Stop replay buffer", "omarchy-shell io.github.anthonyposchen.instant-replay stop")',
+    '-- o.bind("SUPER + ALT + T", "Toggle Instant Replay panel", "omarchy-shell io.github.anthonyposchen.instant-replay toggle")',
+    '-- o.bind("SUPER + ALT + O", "Open Instant Replay", "omarchy-shell io.github.anthonyposchen.instant-replay open")',
+    '-- o.bind("SUPER + ALT + C", "Close Instant Replay", "omarchy-shell io.github.anthonyposchen.instant-replay close")'
   ].join("\n")
 }

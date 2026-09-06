@@ -1,4 +1,4 @@
-# ShadowPlay for Omarchy
+# Instant Replay for Omarchy
 
 Always-on instant replay for Omarchy, using the GPU Screen Recorder that
 already ships with the distro. Buffer one monitor in the background, then save
@@ -11,13 +11,13 @@ buffer.
 ## Install
 
 ```sh
-omarchy plugin add https://github.com/AnthonyPoschen/omarchy-shadowplay.git --enable
+omarchy plugin add https://github.com/AnthonyPoschen/omarchy-instant-replay.git --enable
 ```
 
 Move it if you want it on the left:
 
 ```sh
-omarchy bar move io.github.anthonyposchen.shadowplay --section left
+omarchy bar move io.github.anthonyposchen.instant-replay --section left
 ```
 
 Requires Omarchy 4 (Quickshell bar) plus `gpu-screen-recorder` and `gsr-cli`,
@@ -44,29 +44,29 @@ commented until you want them. `show`, `hide`, and `refresh` are not part of
 this set.
 
 ```lua
-o.bind("SUPER + ALT + R", "Save replay", "omarchy-shell io.github.anthonyposchen.shadowplay save")
--- o.bind("SUPER + ALT + S", "Start replay buffer", "omarchy-shell io.github.anthonyposchen.shadowplay start")
--- o.bind("SUPER + ALT + X", "Stop replay buffer", "omarchy-shell io.github.anthonyposchen.shadowplay stop")
--- o.bind("SUPER + ALT + T", "Toggle ShadowPlay panel", "omarchy-shell io.github.anthonyposchen.shadowplay toggle")
--- o.bind("SUPER + ALT + O", "Open ShadowPlay", "omarchy-shell io.github.anthonyposchen.shadowplay open")
--- o.bind("SUPER + ALT + C", "Close ShadowPlay", "omarchy-shell io.github.anthonyposchen.shadowplay close")
+o.bind("SUPER + ALT + R", "Save replay", "omarchy-shell io.github.anthonyposchen.instant-replay save")
+-- o.bind("SUPER + ALT + S", "Start replay buffer", "omarchy-shell io.github.anthonyposchen.instant-replay start")
+-- o.bind("SUPER + ALT + X", "Stop replay buffer", "omarchy-shell io.github.anthonyposchen.instant-replay stop")
+-- o.bind("SUPER + ALT + T", "Toggle Instant Replay panel", "omarchy-shell io.github.anthonyposchen.instant-replay toggle")
+-- o.bind("SUPER + ALT + O", "Open Instant Replay", "omarchy-shell io.github.anthonyposchen.instant-replay open")
+-- o.bind("SUPER + ALT + C", "Close Instant Replay", "omarchy-shell io.github.anthonyposchen.instant-replay close")
 ```
 
 Hyprlang equivalent:
 
 ```hyprlang
-bind = SUPER ALT, R, exec, omarchy-shell io.github.anthonyposchen.shadowplay save
-# bind = SUPER ALT, S, exec, omarchy-shell io.github.anthonyposchen.shadowplay start
-# bind = SUPER ALT, X, exec, omarchy-shell io.github.anthonyposchen.shadowplay stop
-# bind = SUPER ALT, T, exec, omarchy-shell io.github.anthonyposchen.shadowplay toggle
-# bind = SUPER ALT, O, exec, omarchy-shell io.github.anthonyposchen.shadowplay open
-# bind = SUPER ALT, C, exec, omarchy-shell io.github.anthonyposchen.shadowplay close
+bind = SUPER ALT, R, exec, omarchy-shell io.github.anthonyposchen.instant-replay save
+# bind = SUPER ALT, S, exec, omarchy-shell io.github.anthonyposchen.instant-replay start
+# bind = SUPER ALT, X, exec, omarchy-shell io.github.anthonyposchen.instant-replay stop
+# bind = SUPER ALT, T, exec, omarchy-shell io.github.anthonyposchen.instant-replay toggle
+# bind = SUPER ALT, O, exec, omarchy-shell io.github.anthonyposchen.instant-replay open
+# bind = SUPER ALT, C, exec, omarchy-shell io.github.anthonyposchen.instant-replay close
 ```
 
 You can also call the helper directly after install:
 
 ```sh
-helper="$HOME/.config/omarchy/plugins/io.github.anthonyposchen.shadowplay/bin/omarchy-shadowplay"
+helper="$HOME/.config/omarchy/plugins/io.github.anthonyposchen.instant-replay/bin/omarchy-instant-replay"
 "$helper" start
 "$helper" save
 "$helper" save 30
@@ -77,7 +77,7 @@ helper="$HOME/.config/omarchy/plugins/io.github.anthonyposchen.shadowplay/bin/om
 ## Stock Omarchy screen recording
 
 This plugin starts GPU Screen Recorder under the process name
-`omarchy-shadowplay-gsr`, so Alt+Print and the built-in recording indicator
+`omarchy-instant-replay-gsr`, so Alt+Print and the built-in recording indicator
 should not treat the replay buffer as a session recording.
 
 Only one KMS screen capture can run at a time. While the buffer is on, stock
@@ -97,8 +97,8 @@ it was on; the shell starts it again if the last session was Live or Armed.
 | `audio` | `desktop` | `none`, `desktop`, or `both` (desktop + microphone). |
 
 ```sh
-omarchy bar set io.github.anthonyposchen.shadowplay seconds 120 --json
-omarchy bar set io.github.anthonyposchen.shadowplay audio desktop --json
+omarchy bar set io.github.anthonyposchen.instant-replay seconds 120 --json
+omarchy bar set io.github.anthonyposchen.instant-replay audio desktop --json
 ```
 
 ## Development

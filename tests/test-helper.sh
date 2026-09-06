@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-helper="$root/bin/omarchy-shadowplay"
+helper="$root/bin/omarchy-instant-replay"
 fake_gsr="$root/tests/fake-gsr"
 fake_cli="$root/tests/fake-gsr-cli"
 fake_ffmpeg="$root/tests/fake-ffmpeg"
@@ -70,15 +70,15 @@ assert_file_contains() {
   grep -F -- "$needle" "$file" >/dev/null || fail "$file did not contain: $needle"
 }
 
-grep -F "exec -a omarchy-shadowplay-gsr" "$helper" >/dev/null \
-  || fail "helper must launch the recorder as omarchy-shadowplay-gsr"
+grep -F "exec -a omarchy-instant-replay-gsr" "$helper" >/dev/null \
+  || fail "helper must launch the recorder as omarchy-instant-replay-gsr"
 grep -F "omarchy-capture-region" "$helper" >/dev/null \
   || fail "helper must use Omarchy's region picker"
 grep -F "omarchy-menu-select" "$helper" >/dev/null \
   || fail "helper must use Omarchy's window picker"
 
 replay_dir="$XDG_VIDEOS_DIR/Replays"
-segment_index="$XDG_STATE_HOME/omarchy-shadowplay/segments/index"
+segment_index="$XDG_STATE_HOME/omarchy-instant-replay/segments/index"
 
 public_clips() {
   find "$replay_dir" -maxdepth 1 -type f -name '*.mp4' 2>/dev/null | sort
@@ -111,7 +111,7 @@ assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "cbr"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-a"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "default_output"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-ipc"
-assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "$XDG_RUNTIME_DIR/omarchy-shadowplay/gsr-output"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "$XDG_RUNTIME_DIR/omarchy-instant-replay/gsr-output"
 
 status=$("$helper" status --json)
 echo "$status" | jq -e '.running == true and .monitor == "DP-1" and .seconds == 60 and .audio == "desktop" and .saving == 0' >/dev/null \
@@ -220,8 +220,8 @@ grep -q 'between' "$work/sec-err" || fail "over-max seconds error was unclear: $
 
 # v0.1 config without the new keys still starts one monitor replay buffer.
 "$helper" stop >/dev/null 2>&1 || true
-mkdir -p "$XDG_CONFIG_HOME/omarchy-shadowplay"
-printf 'monitor=\nseconds=60\naudio=desktop\n' > "$XDG_CONFIG_HOME/omarchy-shadowplay/config"
+mkdir -p "$XDG_CONFIG_HOME/omarchy-instant-replay"
+printf 'monitor=\nseconds=60\naudio=desktop\n' > "$XDG_CONFIG_HOME/omarchy-instant-replay/config"
 settings=$("$helper" settings show --json)
 echo "$settings" | jq -e '.blacklist == ["waybar","walker","hyprlock"]' >/dev/null \
   || fail "omitted blacklist key should seed Omarchy chrome: $settings"
@@ -595,8 +595,8 @@ export SHADOWPLAY_NOW=8500
 rm -rf "$replay_dir"
 rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "$segment_index"
 "$helper" stop >/dev/null 2>&1 || true
-mkdir -p "$XDG_CONFIG_HOME/omarchy-shadowplay"
-printf 'monitor=\nseconds=60\naudio=desktop\nmode=follow\n' > "$XDG_CONFIG_HOME/omarchy-shadowplay/config"
+mkdir -p "$XDG_CONFIG_HOME/omarchy-instant-replay"
+printf 'monitor=\nseconds=60\naudio=desktop\nmode=follow\n' > "$XDG_CONFIG_HOME/omarchy-instant-replay/config"
 settings=$("$helper" settings show --json)
 echo "$settings" | jq -e '.mode == "follow" and .captureExtent == "window"' >/dev/null \
   || fail "Follow config without captureExtent should default Window: $settings"
@@ -780,7 +780,7 @@ echo "$status" | jq -e '.subject == "firefox" and .phase == "live"' >/dev/null  
 "$helper" settings set blacklist "" >/dev/null
 settings=$("$helper" settings show --json)
 echo "$settings" | jq -e '.filter == "denylist" and (.blacklist | length) == 0' >/dev/null   || fail "empty Blacklist was not stored: $settings"
-grep -qx 'blacklist=' "$XDG_CONFIG_HOME/omarchy-shadowplay/config" \
+grep -qx 'blacklist=' "$XDG_CONFIG_HOME/omarchy-instant-replay/config" \
   || fail "empty Blacklist should persist as an empty key, not re-seed"
 write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
 status=$("$helper" tick)

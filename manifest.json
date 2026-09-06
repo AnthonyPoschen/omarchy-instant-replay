@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.anthonyposchen.shadowplay",
-  "name": "ShadowPlay",
+  "id": "io.github.anthonyposchen.instant-replay",
+  "name": "Instant Replay",
   "version": "0.1.0",
   "author": "Anthony Poschen",
   "license": "MIT",
@@ -11,7 +11,7 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "ShadowPlay",
+    "displayName": "Instant Replay",
     "description": "Buffer a monitor and save the last N seconds of gameplay.",
     "category": "Capture",
     "allowMultiple": false,

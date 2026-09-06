@@ -1,12 +1,12 @@
 # Agent notes
 
 This is an Omarchy 4 Quickshell plugin. The installable id is
-`io.github.anthonyposchen.shadowplay`. The GitHub repository name is
-`omarchy-shadowplay`.
+`io.github.anthonyposchen.instant-replay`. The GitHub repository name is
+`omarchy-instant-replay`.
 
 ## Layout
 
-- `bin/omarchy-shadowplay` owns GPU Screen Recorder lifecycle, IPC, and
+- `bin/omarchy-instant-replay` owns GPU Screen Recorder lifecycle, IPC, and
   config under XDG. QML must not construct `gpu-screen-recorder` argv.
 - `BarWidget.qml` is the bar icon and IPC target.
 - `Panel.qml` is the popup.
@@ -18,7 +18,7 @@ Replay is monitor-scoped or a persisted Region rectangle on one monitor.
 Do not add portal window capture until portal start failures have an
 explicit fallback. Re-picking a region while Live is a Split.
 
-Launch the recorder as argv0 `omarchy-shadowplay-gsr` so Omarchy's
+Launch the recorder as argv0 `omarchy-instant-replay-gsr` so Omarchy's
 `pgrep -f '^gpu-screen-recorder'` session recorder does not stop this
 process. Still assume only one KMS capture can run at a time.
 
@@ -32,7 +32,7 @@ from unit tests.
 
 ### Issue tracker
 
-GitHub Issues on AnthonyPoschen/omarchy-shadowplay, via `gh`. See `docs/agents/issue-tracker.md`.
+GitHub Issues on AnthonyPoschen/omarchy-instant-replay, via `gh`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

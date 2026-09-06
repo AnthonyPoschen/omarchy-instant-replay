@@ -7,8 +7,8 @@ import "Model.js" as Model
 
 Panel {
   id: root
-  moduleName: "io.github.anthonyposchen.shadowplay"
-  ipcTarget: "io.github.anthonyposchen.shadowplay"
+  moduleName: "io.github.anthonyposchen.instant-replay"
+  ipcTarget: "io.github.anthonyposchen.instant-replay"
   manageIpc: false
 
   property var anchorItem: null
@@ -325,7 +325,7 @@ Panel {
         root.busy = false
         if (exitCode !== 0) {
           var message = String(actionError.text || "").trim()
-          root.lastError = message !== "" ? message : "ShadowPlay command failed."
+          root.lastError = message !== "" ? message : "Instant Replay command failed."
         } else {
           root.lastError = ""
           var parsed = Model.parseJson(actionOutput.text, null)
@@ -371,7 +371,7 @@ Panel {
         spacing: Style.space(10)
 
         PanelHero {
-          title: "ShadowPlay"
+          title: "Instant Replay"
           meta: Model.statusLabel(root.status)
           detail: ""
           foreground: root.contentForeground
