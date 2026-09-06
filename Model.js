@@ -111,7 +111,7 @@ function normalizeMode(value) {
 
 function normalizeFilter(value) {
   var filter = String(value || "all")
-  if (filter === "denylist") return "denylist"
+  if (filter === "all" || filter === "allowlist" || filter === "denylist") return filter
   return "all"
 }
 
@@ -371,17 +371,19 @@ function modeOptions() {
 function filterOptions() {
   return [
     { value: "all", label: "All" },
+    { value: "allowlist", label: "Allowlist" },
     { value: "denylist", label: "Denylist" }
   ]
 }
 
-function hotkeyLuaSnippet() {
+function hotkeyBindSnippet() {
+  var id = "io.github.anthonyposchen.instant-replay"
   return [
-    'o.bind("SUPER + ALT + R", "Save replay", "omarchy-shell io.github.anthonyposchen.instant-replay save")',
-    '-- o.bind("SUPER + ALT + S", "Start replay buffer", "omarchy-shell io.github.anthonyposchen.instant-replay start")',
-    '-- o.bind("SUPER + ALT + X", "Stop replay buffer", "omarchy-shell io.github.anthonyposchen.instant-replay stop")',
-    '-- o.bind("SUPER + ALT + T", "Toggle Instant Replay panel", "omarchy-shell io.github.anthonyposchen.instant-replay toggle")',
-    '-- o.bind("SUPER + ALT + O", "Open Instant Replay", "omarchy-shell io.github.anthonyposchen.instant-replay open")',
-    '-- o.bind("SUPER + ALT + C", "Close Instant Replay", "omarchy-shell io.github.anthonyposchen.instant-replay close")'
+    'bindd = SUPER ALT, R, Save replay, exec, omarchy-shell ' + id + ' save',
+    '# bindd = SUPER ALT, S, Start replay buffer, exec, omarchy-shell ' + id + ' start',
+    '# bindd = SUPER ALT, X, Stop replay buffer, exec, omarchy-shell ' + id + ' stop',
+    '# bindd = SUPER ALT, T, Toggle Instant Replay panel, exec, omarchy-shell ' + id + ' toggle',
+    '# bindd = SUPER ALT, O, Open Instant Replay, exec, omarchy-shell ' + id + ' open',
+    '# bindd = SUPER ALT, C, Close Instant Replay, exec, omarchy-shell ' + id + ' close'
   ].join("\n")
 }

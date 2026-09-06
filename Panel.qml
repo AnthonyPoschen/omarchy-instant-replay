@@ -50,6 +50,14 @@ Panel {
   readonly property var audioChoices: Model.audioOptions(root.configuredMode)
   readonly property var filterChoices: Model.filterOptions()
   readonly property string configuredFilter: Model.normalizeFilter(setting("filter", "all"))
+  readonly property var configuredMatchList: {
+    var stored = setting("matchList", undefined)
+    if (stored !== undefined && stored !== null)
+      return Model.stringList(stored)
+    if (root.status && root.status.matchList !== undefined && root.status.matchList !== null)
+      return Model.stringList(root.status.matchList)
+    return []
+  }
   readonly property var clipResolutionChoices: Model.clipResolutionOptions()
   readonly property string configuredClipResolution: Model.normalizeClipResolution(setting("clipResolution", "1080p"))
   readonly property var clipScaleChoices: Model.clipScaleOptions()
@@ -115,6 +123,16 @@ Panel {
     actionProc.running = true
   }
 
+  function applyMatchList(list) {
+    var encoded = Model.encodeList(list)
+    root.persistSettings({ matchList: encoded })
+    if (root.helperPath === "" || actionProc.running) return
+    root.busy = true
+    root.lastError = ""
+    actionProc.command = root.runHelper(["settings", "set", "matchList", encoded])
+    actionProc.running = true
+  }
+
   function applyBlacklist(list) {
     var encoded = Model.encodeList(list)
     root.persistSettings({ blacklist: encoded })
@@ -176,9 +194,9 @@ Panel {
   }
 
   function copyHotkeys() {
-    var text = Model.hotkeyLuaSnippet()
+    var text = Model.hotkeyBindSnippet()
     Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(text) + " | wl-copy"])
-    root.hotkeyCopyStatus = "Copied Super+Alt+R lua binds"
+    root.hotkeyCopyStatus = "Copied"
   }
 
   function copyLastClip() {
@@ -196,6 +214,18 @@ Panel {
       root.busy = true
       root.lastError = ""
       actionProc.command = root.runHelper(["pick-window"])
+      actionProc.running = true
+    })
+  }
+
+  function pickMatchWindow() {
+    if (root.helperPath === "" || actionProc.running) return
+    root.close()
+    Qt.callLater(function() {
+      if (actionProc.running) return
+      root.busy = true
+      root.lastError = ""
+      actionProc.command = root.runHelper(["pick-match-window"])
       actionProc.running = true
     })
   }
@@ -329,18 +359,19 @@ Panel {
         } else {
           root.lastError = ""
           var parsed = Model.parseJson(actionOutput.text, null)
-          if (parsed && typeof parsed === "object" && (parsed.region !== undefined || parsed.pinAddress !== undefined || parsed.blacklist !== undefined)) {
+          if (parsed && typeof parsed === "object" && (parsed.region !== undefined || parsed.pinAddress !== undefined || parsed.blacklist !== undefined || parsed.matchList !== undefined)) {
             var values = {}
             if (parsed.region !== undefined) values.region = String(parsed.region || "")
             if (parsed.pinAddress !== undefined) values.pinAddress = String(parsed.pinAddress || "")
             if (parsed.blacklist !== undefined) values.blacklist = Model.encodeList(parsed.blacklist)
+            if (parsed.matchList !== undefined) values.matchList = Model.encodeList(parsed.matchList)
             if (parsed.mode) values.mode = Model.normalizeMode(parsed.mode)
             root.persistSettings(values)
           }
         }
         root.refresh()
         var lastArg = String(actionProc.command && actionProc.command.length ? actionProc.command[actionProc.command.length - 1] : "")
-        if (lastArg === "pick-region" || lastArg === "pick-window" || lastArg === "pick-blacklist-window")
+        if (lastArg === "pick-region" || lastArg === "pick-window" || lastArg === "pick-blacklist-window" || lastArg === "pick-match-window")
           root.open()
       })
     }
@@ -450,6 +481,67 @@ Panel {
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onChanged: function(value) { root.applySetting("filter", Model.normalizeFilter(value)) }
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(6)
+          visible: root.configuredMode === "follow" && root.configuredFilter === "allowlist"
+          height: visible ? implicitHeight : 0
+
+          Text {
+            text: "Allowlist"
+            color: Qt.darker(root.contentForeground, 1.4)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+
+          Repeater {
+            model: root.configuredMatchList
+            delegate: Row {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Text {
+                width: parent.width - 36 - parent.spacing
+                text: modelData
+                elide: Text.ElideMiddle
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.body
+                verticalAlignment: Text.AlignVCenter
+                height: 36
+              }
+
+              Button {
+                width: 36
+                text: "×"
+                enabled: !root.busy
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+                onClicked: root.applyMatchList(Model.replaceListItem(root.configuredMatchList, index, ""))
+              }
+            }
+          }
+
+          Button {
+            width: parent.width
+            text: "Pick window"
+            enabled: !root.busy
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.pickMatchWindow()
+          }
+
+          Button {
+            width: parent.width
+            text: "Empty allowlist"
+            enabled: !root.busy && root.configuredMatchList.length > 0
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.applyMatchList([])
+          }
         }
 
         Column {
@@ -743,7 +835,7 @@ Panel {
 
         Button {
           width: parent.width
-          text: root.hotkeyCopyStatus !== "" ? root.hotkeyCopyStatus : "Copy Super+Alt+R Save hotkey (lua binds)"
+          text: root.hotkeyCopyStatus !== "" ? root.hotkeyCopyStatus : "Copy keybinds"
           enabled: !root.busy
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily

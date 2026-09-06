@@ -132,6 +132,7 @@ Usage:
   $PROGRAM pick-region
   $PROGRAM pick-window
   $PROGRAM pick-blacklist-window
+  $PROGRAM pick-match-window
   $PROGRAM tick
   $PROGRAM doctor
   $PROGRAM --help
@@ -789,6 +790,19 @@ append_blacklist_class() {
     CONFIG_BLACKLIST+=$'\n'"$class"
   else
     CONFIG_BLACKLIST="$class"
+  fi
+}
+
+append_match_list_class() {
+  local class="$1" line
+  [[ -n $class ]] || return 1
+  while IFS= read -r line; do
+    [[ $line == "$class" ]] && return 0
+  done <<<"$CONFIG_MATCH_LIST"
+  if [[ -n $CONFIG_MATCH_LIST ]]; then
+    CONFIG_MATCH_LIST+=$'\n'"$class"
+  else
+    CONFIG_MATCH_LIST="$class"
   fi
 }
 
@@ -2634,6 +2648,21 @@ cmd_pick_blacklist_window() {
   cmd_settings_show --json
 }
 
+cmd_pick_match_window() {
+  load_config
+  local addr line class
+  addr=$(pick_window_address)
+  line=$(window_line_by_address "$addr") || die "could not resolve the picked window"
+  IFS='|' read -r class _ <<<"$line"
+  [[ -n $class ]] || die "could not resolve the picked window"
+  append_match_list_class "$class"
+  write_config
+  if [[ $CONFIG_MODE == follow ]] && follow_session_active; then
+    cmd_follow_tick
+  fi
+  cmd_settings_show --json
+}
+
 cmd_pick_region() {
   load_config
   local spec
@@ -2710,6 +2739,7 @@ main() {
   pick-region) cmd_pick_region ;;
   pick-window) cmd_pick_window ;;
   pick-blacklist-window) cmd_pick_blacklist_window ;;
+  pick-match-window) cmd_pick_match_window ;;
   doctor) cmd_doctor ;;
   *) die_usage "unknown command: $cmd" ;;
   esac

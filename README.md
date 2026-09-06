@@ -38,29 +38,17 @@ Clips land in `~/Videos/Replays` (or `$OMARCHY_SCREENRECORD_DIR/Replays`).
 
 ## Hotkey
 
-Plugins cannot write Hyprland binds. Copy the lua snippet from Settings, or
-paste this into `~/.config/hypr/bindings.lua`. Save is live; the rest stay
-commented until you want them. `show`, `hide`, and `refresh` are not part of
-this set.
-
-```lua
-o.bind("SUPER + ALT + R", "Save replay", "omarchy-shell io.github.anthonyposchen.instant-replay save")
--- o.bind("SUPER + ALT + S", "Start replay buffer", "omarchy-shell io.github.anthonyposchen.instant-replay start")
--- o.bind("SUPER + ALT + X", "Stop replay buffer", "omarchy-shell io.github.anthonyposchen.instant-replay stop")
--- o.bind("SUPER + ALT + T", "Toggle Instant Replay panel", "omarchy-shell io.github.anthonyposchen.instant-replay toggle")
--- o.bind("SUPER + ALT + O", "Open Instant Replay", "omarchy-shell io.github.anthonyposchen.instant-replay open")
--- o.bind("SUPER + ALT + C", "Close Instant Replay", "omarchy-shell io.github.anthonyposchen.instant-replay close")
-```
-
-Hyprlang equivalent:
+Plugins cannot write Hyprland binds. Copy keybinds from Settings, or paste
+this next to your other `bindd` lines. Save is live; the rest stay commented
+until you want them. `show`, `hide`, and `refresh` are not part of this set.
 
 ```hyprlang
-bind = SUPER ALT, R, exec, omarchy-shell io.github.anthonyposchen.instant-replay save
-# bind = SUPER ALT, S, exec, omarchy-shell io.github.anthonyposchen.instant-replay start
-# bind = SUPER ALT, X, exec, omarchy-shell io.github.anthonyposchen.instant-replay stop
-# bind = SUPER ALT, T, exec, omarchy-shell io.github.anthonyposchen.instant-replay toggle
-# bind = SUPER ALT, O, exec, omarchy-shell io.github.anthonyposchen.instant-replay open
-# bind = SUPER ALT, C, exec, omarchy-shell io.github.anthonyposchen.instant-replay close
+bindd = SUPER ALT, R, Save replay, exec, omarchy-shell io.github.anthonyposchen.instant-replay save
+# bindd = SUPER ALT, S, Start replay buffer, exec, omarchy-shell io.github.anthonyposchen.instant-replay start
+# bindd = SUPER ALT, X, Stop replay buffer, exec, omarchy-shell io.github.anthonyposchen.instant-replay stop
+# bindd = SUPER ALT, T, Toggle Instant Replay panel, exec, omarchy-shell io.github.anthonyposchen.instant-replay toggle
+# bindd = SUPER ALT, O, Open Instant Replay, exec, omarchy-shell io.github.anthonyposchen.instant-replay open
+# bindd = SUPER ALT, C, Close Instant Replay, exec, omarchy-shell io.github.anthonyposchen.instant-replay close
 ```
 
 You can also call the helper directly after install:

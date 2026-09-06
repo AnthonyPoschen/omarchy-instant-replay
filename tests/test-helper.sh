@@ -799,6 +799,18 @@ echo "$settings" | jq -e '.mode != "pin"' >/dev/null || fail "blacklist pick swi
 unset SHADOWPLAY_WINDOW_PICKER
 unset SHADOWPLAY_PICKED_WINDOW
 
+export SHADOWPLAY_WINDOW_PICKER="$fake_window"
+export SHADOWPLAY_PICKED_WINDOW="0xff"
+"$helper" settings set filter allowlist >/dev/null
+"$helper" settings set matchList "" >/dev/null
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true},{"class":"kitty","monitor":"DP-1","address":"0xkit","focused":false}]'
+settings=$("$helper" pick-match-window)
+echo "$settings" | jq -e '.mode == "follow" and .filter == "allowlist" and (.matchList | index("firefox") != null)' >/dev/null \
+  || fail "pick-match-window should add the clicked window class: $settings"
+echo "$settings" | jq -e '.mode != "pin"' >/dev/null || fail "allowlist pick switched to Pin"
+unset SHADOWPLAY_WINDOW_PICKER
+unset SHADOWPLAY_PICKED_WINDOW
+
 "$helper" settings set filter all >/dev/null
 write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
 status=$("$helper" tick)
