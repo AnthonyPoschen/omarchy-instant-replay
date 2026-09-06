@@ -5,8 +5,8 @@ FAKE_DIR="${SHADOWPLAY_FAKE_DIR:?SHADOWPLAY_FAKE_DIR is not set}"
 mkdir -p "$FAKE_DIR"
 
 if [[ ${1:-} == --list-monitors ]]; then
-  printf 'HDMI-A-1|3440x1440\n'
-  printf 'DP-1|5120x1440\n'
+  printf 'HDMI-A-1|3440x1440|0,0\n'
+  printf 'DP-1|5120x1440|3440,0\n'
   exit 0
 fi
 

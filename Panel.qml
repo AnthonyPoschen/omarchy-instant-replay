@@ -37,6 +37,7 @@ Panel {
   readonly property bool configuredAutostart: setting("autostart", false) === true || String(setting("autostart", false)) === "true"
   readonly property string configuredOutputDir: String(setting("outputDir", "") || "")
   readonly property string configuredMode: Model.normalizeMode(setting("mode", "monitor"))
+  readonly property string configuredRegion: String(setting("region", "") || "")
   readonly property color contentForeground: root.bar ? root.bar.foreground : Color.foreground
   readonly property string contentFontFamily: root.bar ? root.bar.fontFamily : Style.font.family
   readonly property var modeChoices: Model.modeOptions()
@@ -107,8 +108,14 @@ Panel {
     if (root.helperPath === "" || actionProc.running) return
     root.busy = true
     root.lastError = ""
-    var args = ["start", "--seconds=" + String(root.configuredSeconds), "--audio=" + root.configuredAudio]
-    if (root.configuredMode !== "follow") args.splice(1, 0, "--monitor=" + root.configuredMonitor)
+    var args = [
+      "start",
+      "--mode=" + root.configuredMode,
+      "--seconds=" + String(root.configuredSeconds),
+      "--audio=" + root.configuredAudio
+    ]
+    if (root.configuredMode !== "follow") args.push("--monitor=" + root.configuredMonitor)
+    if (root.configuredMode === "region") args.push("--region=" + root.configuredRegion)
     actionProc.command = root.runHelper(args)
     actionProc.running = true
   }
@@ -141,6 +148,18 @@ Panel {
     if (text === "") return
     Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(text) + " | wl-copy"])
     root.clipCopyStatus = "Copied"
+  }
+
+  function pickRegion() {
+    if (root.helperPath === "" || actionProc.running) return
+    root.close()
+    Qt.callLater(function() {
+      if (actionProc.running) return
+      root.busy = true
+      root.lastError = ""
+      actionProc.command = root.runHelper(["pick-region"])
+      actionProc.running = true
+    })
   }
 
   function pickOutputDir() {
@@ -229,8 +248,16 @@ Panel {
           root.lastError = message !== "" ? message : "ShadowPlay command failed."
         } else {
           root.lastError = ""
+          var parsed = Model.parseJson(actionOutput.text, null)
+          if (parsed && typeof parsed === "object" && parsed.region !== undefined) {
+            var values = { region: String(parsed.region || "") }
+            if (parsed.mode) values.mode = Model.normalizeMode(parsed.mode)
+            root.persistSettings(values)
+          }
         }
         root.refresh()
+        if (String(actionProc.command && actionProc.command.length ? actionProc.command[actionProc.command.length - 1] : "") === "pick-region")
+          root.open()
       })
     }
   }
@@ -351,6 +378,33 @@ Panel {
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onChanged: function(value) { root.applySetting("monitor", value) }
+        }
+
+        Row {
+          width: parent.width
+          spacing: Style.space(8)
+          visible: root.configuredMode === "region"
+          height: visible ? implicitHeight : 0
+
+          Text {
+            width: parent.width - pickRegionButton.width - parent.spacing
+            text: root.configuredRegion !== "" ? root.configuredRegion : "No rectangle yet"
+            elide: Text.ElideMiddle
+            color: root.contentForeground
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.body
+            verticalAlignment: Text.AlignVCenter
+            height: pickRegionButton.height
+          }
+
+          Button {
+            id: pickRegionButton
+            text: "Pick region"
+            enabled: !root.busy
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.pickRegion()
+          }
         }
 
         Dropdown {

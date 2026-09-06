@@ -34,6 +34,7 @@ function parseStatus(text) {
     armed: status.armed === true || status.phase === "armed",
     linger: status.linger === true || status.phase === "linger",
     subject: String(status.subject || ""),
+    region: String(status.region || ""),
     mode: normalizeMode(status.mode),
     filter: normalizeFilter(status.filter),
     captureExtent: normalizeCaptureExtent(status.captureExtent),
@@ -173,7 +174,8 @@ function statusLabel(status) {
 function modeOptions() {
   return [
     { value: "monitor", label: "Monitor" },
-    { value: "follow", label: "Follow active window" }
+    { value: "follow", label: "Follow active window" },
+    { value: "region", label: "Region" }
   ]
 }
 
