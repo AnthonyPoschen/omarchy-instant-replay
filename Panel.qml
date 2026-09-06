@@ -40,6 +40,7 @@ Panel {
   readonly property string configuredOutputDir: String(setting("outputDir", "") || "")
   readonly property string configuredMode: Model.normalizeMode(setting("mode", "monitor"))
   readonly property string configuredRegion: String(setting("region", "") || "")
+  readonly property string configuredPinAddress: String(setting("pinAddress", "") || "")
   readonly property color contentForeground: root.bar ? root.bar.foreground : Color.foreground
   readonly property string contentFontFamily: root.bar ? root.bar.fontFamily : Style.font.family
   readonly property var modeChoices: Model.modeOptions()
@@ -238,8 +239,9 @@ Panel {
       "--seconds=" + String(root.configuredSeconds),
       "--audio=" + root.configuredAudio
     ]
-    if (root.configuredMode !== "follow") args.push("--monitor=" + root.configuredMonitor)
+    if (root.configuredMode !== "follow" && root.configuredMode !== "pin") args.push("--monitor=" + root.configuredMonitor)
     if (root.configuredMode === "region") args.push("--region=" + root.configuredRegion)
+    if (root.configuredMode === "pin") args.push("--pin=" + root.configuredPinAddress)
     actionProc.command = root.runHelper(args)
     actionProc.running = true
   }
@@ -272,6 +274,18 @@ Panel {
     if (text === "") return
     Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(text) + " | wl-copy"])
     root.clipCopyStatus = "Copied"
+  }
+
+  function pickWindow() {
+    if (root.helperPath === "" || actionProc.running) return
+    root.close()
+    Qt.callLater(function() {
+      if (actionProc.running) return
+      root.busy = true
+      root.lastError = ""
+      actionProc.command = root.runHelper(["pick-window"])
+      actionProc.running = true
+    })
   }
 
   function pickRegion() {
@@ -383,14 +397,18 @@ Panel {
         } else {
           root.lastError = ""
           var parsed = Model.parseJson(actionOutput.text, null)
-          if (parsed && typeof parsed === "object" && parsed.region !== undefined) {
-            var values = { region: String(parsed.region || "") }
+          if (parsed && typeof parsed === "object" && (parsed.region !== undefined || parsed.pinAddress !== undefined)) {
+            var values = {}
+            if (parsed.region !== undefined) values.region = String(parsed.region || "")
+            if (parsed.pinAddress !== undefined) values.pinAddress = String(parsed.pinAddress || "")
             if (parsed.mode) values.mode = Model.normalizeMode(parsed.mode)
+            if (parsed.captureExtent) values.captureExtent = Model.normalizeCaptureExtent(parsed.captureExtent)
             root.persistSettings(values)
           }
         }
         root.refresh()
-        if (String(actionProc.command && actionProc.command.length ? actionProc.command[actionProc.command.length - 1] : "") === "pick-region")
+        var lastArg = String(actionProc.command && actionProc.command.length ? actionProc.command[actionProc.command.length - 1] : "")
+        if (lastArg === "pick-region" || lastArg === "pick-window")
           root.open()
       })
     }
@@ -715,6 +733,33 @@ Panel {
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onChanged: function(value) { root.applySetting("monitor", value) }
+        }
+
+        Row {
+          width: parent.width
+          spacing: Style.space(8)
+          visible: root.configuredMode === "pin"
+          height: visible ? implicitHeight : 0
+
+          Text {
+            width: parent.width - pickWindowButton.width - parent.spacing
+            text: String(root.status.subject || "") !== "" ? ("Pinned · " + root.status.subject) : (root.configuredPinAddress !== "" ? ("Pinned · " + root.configuredPinAddress) : "No window yet")
+            elide: Text.ElideMiddle
+            color: root.contentForeground
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.body
+            verticalAlignment: Text.AlignVCenter
+            height: pickWindowButton.height
+          }
+
+          Button {
+            id: pickWindowButton
+            text: "Pick window"
+            enabled: !root.busy
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.pickWindow()
+          }
         }
 
         Row {

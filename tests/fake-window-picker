@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Omarchy-style window picker: print a Hyprland client address.
+printf '%s\n' "${SHADOWPLAY_PICKED_WINDOW:-0xff}"
