@@ -145,8 +145,12 @@ Panel {
 
   function pickOutputDir() {
     if (folderPickProc.running) return
-    folderPickProc.command = ["omarchy-file-select", "--directory", "--title", "Clips folder"]
-    folderPickProc.running = true
+    root.close()
+    Qt.callLater(function() {
+      if (folderPickProc.running) return
+      folderPickProc.command = ["omarchy-file-select", "--directory", "--title", "Clips folder"]
+      folderPickProc.running = true
+    })
   }
 
   function maybeAutostart() {
@@ -201,11 +205,14 @@ Panel {
     stdout: StdioCollector { id: folderPickOut; waitForEnd: true }
     onExited: function(exitCode) {
       Qt.callLater(function() {
-        if (exitCode !== 0) return
-        var path = String(folderPickOut.text || "").trim()
-        if (path === "") return
-        outputDirField.text = path
-        root.applySetting("outputDir", path)
+        if (exitCode === 0) {
+          var path = String(folderPickOut.text || "").trim()
+          if (path !== "") {
+            outputDirField.text = path
+            root.applySetting("outputDir", path)
+          }
+        }
+        root.open()
       })
     }
   }
