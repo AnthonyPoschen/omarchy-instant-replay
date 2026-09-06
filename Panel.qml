@@ -143,6 +143,12 @@ Panel {
     root.clipCopyStatus = "Copied"
   }
 
+  function pickOutputDir() {
+    if (folderPickProc.running) return
+    folderPickProc.command = ["omarchy-file-select", "--directory", "--title", "Clips folder"]
+    folderPickProc.running = true
+  }
+
   function maybeAutostart() {
     if (root.autostartAttempted || root.helperPath === "") return
     root.autostartAttempted = true
@@ -186,6 +192,20 @@ Panel {
     onExited: function(exitCode) {
       Qt.callLater(function() {
         if (exitCode === 0) root.monitors = Model.parseMonitors(monitorsOutput.text)
+      })
+    }
+  }
+
+  Process {
+    id: folderPickProc
+    stdout: StdioCollector { id: folderPickOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      Qt.callLater(function() {
+        if (exitCode !== 0) return
+        var path = String(folderPickOut.text || "").trim()
+        if (path === "") return
+        outputDirField.text = path
+        root.applySetting("outputDir", path)
       })
     }
   }
@@ -343,15 +363,29 @@ Panel {
           font.bold: true
         }
 
-        TextField {
-          id: outputDirField
+        Row {
           width: parent.width
-          text: root.configuredOutputDir
-          placeholderText: root.status.outputDir !== "" ? root.status.outputDir : "Videos/Replays"
-          foreground: root.contentForeground
-          onEditingFinished: {
-            if (root.configuredOutputDir === text) return
-            root.applySetting("outputDir", text)
+          spacing: Style.space(8)
+
+          TextField {
+            id: outputDirField
+            width: parent.width - browseFolderButton.width - parent.spacing
+            text: root.configuredOutputDir
+            placeholderText: root.status.outputDir !== "" ? root.status.outputDir : "Videos/Replays"
+            foreground: root.contentForeground
+            onEditingFinished: {
+              if (root.configuredOutputDir === text) return
+              root.applySetting("outputDir", text)
+            }
+          }
+
+          Button {
+            id: browseFolderButton
+            text: "Browse"
+            enabled: !folderPickProc.running
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.pickOutputDir()
           }
         }
 
