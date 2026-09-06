@@ -44,6 +44,17 @@ Panel {
   readonly property var secondsChoices: Model.secondsOptions()
   readonly property var audioChoices: Model.audioOptions()
   readonly property var filterChoices: Model.filterOptions()
+  readonly property string configuredCodec: Model.normalizeCodec(setting("codec", "auto"))
+  readonly property int configuredFps: Model.boundedInteger(setting("fps", 60), 60, Model.minFps(), Model.maxFps())
+  readonly property int configuredQuality: Model.boundedInteger(setting("quality", 40000), 40000, Model.minQuality(), Model.maxQuality())
+  readonly property bool configuredCursor: setting("cursor", true) !== false && String(setting("cursor", true)) !== "false"
+  readonly property string configuredFramerateMode: Model.normalizeFramerateMode(setting("framerateMode", "cfr"))
+  readonly property string configuredBitrateMode: Model.normalizeBitrateMode(setting("bitrateMode", "cbr"))
+  readonly property var codecChoices: Model.codecOptions()
+  readonly property var fpsChoices: Model.fpsOptions()
+  readonly property var qualityChoices: Model.qualityOptions()
+  readonly property var framerateModeChoices: Model.framerateModeOptions()
+  readonly property var bitrateModeChoices: Model.bitrateModeOptions()
 
   function open() {
     root.refresh()
@@ -248,7 +259,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: monitorDropdown.popupOpen || secondsDropdown.popupOpen || audioDropdown.popupOpen || modeDropdown.popupOpen
+      blocked: monitorDropdown.popupOpen || secondsDropdown.popupOpen || audioDropdown.popupOpen || modeDropdown.popupOpen || codecDropdown.popupOpen || fpsDropdown.popupOpen || qualityDropdown.popupOpen || framerateDropdown.popupOpen || bitrateDropdown.popupOpen
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -436,6 +447,71 @@ Panel {
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onToggled: root.extrasEncoderOpen = !root.extrasEncoderOpen
+
+          Dropdown {
+            id: codecDropdown
+            width: parent.width
+            label: "Codec"
+            value: root.configuredCodec
+            options: root.codecChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("codec", Model.normalizeCodec(value)) }
+          }
+
+          Dropdown {
+            id: fpsDropdown
+            width: parent.width
+            label: "FPS"
+            value: String(root.configuredFps)
+            options: root.fpsChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("fps", Model.boundedInteger(value, 60, Model.minFps(), Model.maxFps())) }
+          }
+
+          Dropdown {
+            id: qualityDropdown
+            width: parent.width
+            label: "Quality"
+            value: String(root.configuredQuality)
+            options: root.qualityChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("quality", Model.boundedInteger(value, 40000, Model.minQuality(), Model.maxQuality())) }
+          }
+
+          Dropdown {
+            id: framerateDropdown
+            width: parent.width
+            label: "Framerate mode"
+            value: root.configuredFramerateMode
+            options: root.framerateModeChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("framerateMode", Model.normalizeFramerateMode(value)) }
+          }
+
+          Dropdown {
+            id: bitrateDropdown
+            width: parent.width
+            label: "Bitrate mode"
+            value: root.configuredBitrateMode
+            options: root.bitrateModeChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("bitrateMode", Model.normalizeBitrateMode(value)) }
+          }
+
+          Toggle {
+            width: parent.width
+            label: "Cursor"
+            description: "Include the pointer in the Replay Buffer."
+            checked: root.configuredCursor
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.applySetting("cursor", !root.configuredCursor)
+          }
         }
 
         ExtraGroup {
