@@ -296,4 +296,107 @@ clip=$("$helper" save)
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "-ss"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "50"
 "$helper" stop
+# Follow Filter=All: Armed, Live, Sticky, Linger, Split
+windows_file="$work/windows.json"
+monitors_file="$work/monitors.json"
+export SHADOWPLAY_WINDOWS_FILE="$windows_file"
+export SHADOWPLAY_MONITORS_FILE="$monitors_file"
+
+write_windows() {
+  printf '%s\n' "$1" > "$windows_file"
+}
+
+printf '%s\n' '[{"id":0,"name":"HDMI-A-1"},{"id":1,"name":"DP-1","focused":true}]' > "$monitors_file"
+
+"$helper" stop >/dev/null 2>&1 || true
+"$helper" settings set mode follow >/dev/null
+"$helper" settings set filter all >/dev/null
+"$helper" settings set seconds 60 >/dev/null
+write_windows '[{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
+export SHADOWPLAY_NOW=6000
+"$helper" start >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.mode == "follow" and .filter == "all" and .armed == true and .running == false and .phase == "armed"' >/dev/null \
+  || fail "follow autostart should Arm without Live: $status"
+[[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Armed launched a Replay Buffer on chrome"
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "DP-1" and .subject == "firefox"' >/dev/null \
+  || fail "focusing a normal window should go Live: $status"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "DP-1"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Live did not launch the recorder"
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "DP-1" and .subject == "firefox"' >/dev/null \
+  || fail "chrome focus should Sticky: $status"
+[[ ! -r $segment_index ]] || fail "Sticky chrome retargeted/Split"
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"discord","monitor":"DP-1","address":"0xdc","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "DP-1" and .subject == "firefox"' >/dev/null \
+  || fail "Discord should Sticky the Subject: $status"
+[[ ! -r $segment_index ]] || fail "Discord Sticky Split the buffer"
+
+write_windows '[{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "linger" and .monitor == "DP-1"' >/dev/null \
+  || fail "destroyed Subject should Linger: $status"
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff2","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "DP-1" and .subject == "firefox"' >/dev/null \
+  || fail "reopen on same monitor should reclaim without Split: $status"
+[[ ! -r $segment_index ]] || fail "reopen Linger Split the buffer"
+
+write_windows '[]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.phase == "linger"' >/dev/null || fail "close again should Linger: $status"
+export SHADOWPLAY_NOW=6060
+status=$("$helper" tick)
+echo "$status" | jq -e '.armed == true and .running == false and .phase == "armed"' >/dev/null \
+  || fail "Linger should return to Armed after one Replay Window: $status"
+[[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Linger expiry left the recorder Live"
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
+export SHADOWPLAY_NOW=7000
+"$helper" start >/dev/null
+write_windows '[{"class":"kitty","monitor":"HDMI-A-1","address":"0xkit","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "HDMI-A-1" and .subject == "kitty"' >/dev/null \
+  || fail "other-monitor allowed window should Split: $status"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "HDMI-A-1"
+[[ -r $segment_index ]] || fail "Follow Split did not keep a Segment"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list"
+clip=$("$helper" save)
+[[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Follow Split Save did not stitch one Clip"
+[[ -e $clip ]] || fail "Follow Split Clip missing"
+"$helper" stop
+
+# hyprctl clients -j shape: integer monitor ids + focusHistoryID
+write_windows '[{"class":"firefox","initialClass":"firefox","monitor":1,"address":"0xff","focusHistoryID":0},{"class":"waybar","monitor":1,"address":"0xbar","focusHistoryID":2}]'
+export SHADOWPLAY_NOW=8000
+"$helper" start >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "DP-1" and .subject == "firefox"' >/dev/null \
+  || fail "hyprctl-shaped clients should resolve focused Subject on connector: $status"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "DP-1"
+
+write_windows '[{"class":"firefox","monitor":1,"address":"0xff","focusHistoryID":1},{"class":"discord","monitor":1,"address":"0xdc","focusHistoryID":0}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "firefox" and .monitor == "DP-1" and .phase == "live"' >/dev/null \
+  || fail "hyprctl Discord glance should Sticky: $status"
+
+# Mode change to Follow while already Follow/Live must Split, not discard
+"$helper" settings set mode follow >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "firefox"' >/dev/null \
+  || fail "setting mode=follow again should keep Live: $status"
+[[ ! -r $segment_index ]] || fail "repeat mode=follow discarded/Split unexpectedly"
+
+"$helper" settings set mode monitor >/dev/null
+[[ -r $segment_index ]] || fail "mode change away from Follow should Split (keep Segment)"
+"$helper" stop
+
 echo OK

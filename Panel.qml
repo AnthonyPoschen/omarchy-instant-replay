@@ -14,7 +14,7 @@ Panel {
   property var anchorItem: null
   property var hostWidget: null
   property string helperPath: ""
-  property var status: ({ running: false, monitor: "", seconds: 60, audio: "desktop", lastClip: "" })
+  property var status: ({ running: false, monitor: "", seconds: 60, audio: "desktop", lastClip: "", phase: "off", armed: false, linger: false, subject: "" })
   property var monitors: []
   property bool busy: false
   property bool autostartAttempted: false
@@ -29,6 +29,8 @@ Panel {
 
   readonly property var barIdentity: hostWidget || root
   readonly property bool running: status.running === true
+  readonly property bool armed: status.armed === true || status.phase === "armed"
+  readonly property bool sessionOn: running || armed || status.phase === "linger" || status.linger === true
   readonly property string configuredMonitor: String(setting("monitor", "") || "")
   readonly property int configuredSeconds: Model.boundedInteger(setting("seconds", 60), 60, Model.minSeconds(), Model.maxSeconds())
   readonly property string configuredAudio: Model.normalizeAudio(setting("audio", "desktop"))
@@ -41,6 +43,7 @@ Panel {
   readonly property var monitorChoices: Model.monitorOptions(monitors)
   readonly property var secondsChoices: Model.secondsOptions()
   readonly property var audioChoices: Model.audioOptions()
+  readonly property var filterChoices: Model.filterOptions()
 
   function open() {
     root.refresh()
@@ -104,12 +107,9 @@ Panel {
     if (root.helperPath === "" || actionProc.running) return
     root.busy = true
     root.lastError = ""
-    actionProc.command = root.runHelper([
-      "start",
-      "--monitor=" + root.configuredMonitor,
-      "--seconds=" + String(root.configuredSeconds),
-      "--audio=" + root.configuredAudio
-    ])
+    var args = ["start", "--seconds=" + String(root.configuredSeconds), "--audio=" + root.configuredAudio]
+    if (root.configuredMode !== "follow") args.splice(1, 0, "--monitor=" + root.configuredMonitor)
+    actionProc.command = root.runHelper(args)
     actionProc.running = true
   }
 
@@ -261,7 +261,7 @@ Panel {
 
         PanelHero {
           title: "ShadowPlay"
-          meta: root.running ? "Buffer on" : "Buffer off"
+          meta: Model.statusLabel(root.status)
           detail: ""
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
@@ -280,13 +280,13 @@ Panel {
         Toggle {
           width: parent.width
           label: "Replay buffer"
-          description: root.running ? "Live on this monitor. Left-click the bar icon to save." : "Off. Start to keep the last Replay Window."
-          checked: root.running
+          description: root.running ? "Live. Left-click the bar icon to save." : (root.armed ? "Armed. Waiting for a window." : "Off. Start to keep the last Replay Window.")
+          checked: root.sessionOn
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onClicked: {
             if (root.busy) return
-            root.running ? root.stopBuffer() : root.startBuffer()
+            root.sessionOn ? root.stopBuffer() : root.startBuffer()
           }
         }
 
@@ -322,7 +322,7 @@ Panel {
           id: modeDropdown
           width: parent.width
           label: "Mode"
-          value: root.configuredMode === "monitor" ? "monitor" : "monitor"
+          value: root.configuredMode
           options: root.modeChoices
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
@@ -330,8 +330,21 @@ Panel {
         }
 
         Dropdown {
+          id: filterDropdown
+          width: parent.width
+          visible: root.configuredMode === "follow"
+          label: "Filter"
+          value: Model.normalizeFilter(setting("filter", "all"))
+          options: root.filterChoices
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          onChanged: function(value) { root.applySetting("filter", Model.normalizeFilter(value)) }
+        }
+
+        Dropdown {
           id: monitorDropdown
           width: parent.width
+          visible: root.configuredMode === "monitor"
           label: "Monitor"
           value: root.configuredMonitor
           options: root.monitorChoices
@@ -408,8 +421,8 @@ Panel {
 
         Button {
           width: parent.width
-          text: root.running ? "Save replay" : "Start buffer"
-          enabled: !root.busy
+          text: root.running ? "Save replay" : (root.armed ? "Armed" : "Start buffer")
+          enabled: !root.busy && !(root.armed && !root.running)
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onClicked: root.running ? root.save() : root.startBuffer()

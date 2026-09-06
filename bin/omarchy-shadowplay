@@ -21,6 +21,7 @@ GSR_BIN="${SHADOWPLAY_GSR_BIN:-gpu-screen-recorder}"
 GSR_CLI_BIN="${SHADOWPLAY_GSR_CLI_BIN:-gsr-cli}"
 FFMPEG_BIN="${SHADOWPLAY_FFMPEG_BIN:-ffmpeg}"
 FOCUSED_MONITOR_BIN="${SHADOWPLAY_FOCUSED_MONITOR_BIN:-omarchy-hyprland-monitor-focused}"
+HYPRCTL_BIN="${SHADOWPLAY_HYPRCTL_BIN:-hyprctl}"
 
 DEFAULT_SECONDS=60
 DEFAULT_AUDIO="desktop"
@@ -104,6 +105,7 @@ Usage:
   $PROGRAM settings set cursor <true|false>
   $PROGRAM settings set framerateMode <cfr|vfr>
   $PROGRAM settings set bitrateMode <cbr|vbr>
+  $PROGRAM tick
   $PROGRAM doctor
   $PROGRAM --help
   $PROGRAM --version
@@ -485,10 +487,39 @@ activity_value() {
 
 write_activity() {
   local running="$1" monitor="$2" seconds="$3" audio="$4" last_clip="${5:-}" started="${6:-}"
+  local phase="${7:-}"
+  local subject_class="${8:-}"
+  local subject_address="${9:-}"
+  local linger_until="${10:-}"
   local tmp="$STATE_DIR/.activity.$$"
+  if [[ -z $phase ]]; then
+    phase=$(activity_value phase)
+  fi
+  if [[ -z $phase ]]; then
+    if [[ $running == true ]]; then
+      phase=live
+    else
+      phase=off
+    fi
+  fi
   if [[ $running == true && -z $started ]]; then
     started=$(activity_value started)
     [[ -n $started ]] || started=$(now_epoch)
+  fi
+  if [[ -z $subject_class ]]; then
+    subject_class=$(activity_value subject_class)
+  elif [[ $subject_class == "-" ]]; then
+    subject_class=""
+  fi
+  if [[ -z $subject_address ]]; then
+    subject_address=$(activity_value subject_address)
+  elif [[ $subject_address == "-" ]]; then
+    subject_address=""
+  fi
+  if [[ -z $linger_until ]]; then
+    linger_until=$(activity_value linger_until)
+  elif [[ $linger_until == "-" ]]; then
+    linger_until=""
   fi
   (umask 077
     {
@@ -506,6 +537,10 @@ write_activity() {
       printf 'bitrate_mode=%s\n' "$CONFIG_BITRATE_MODE"
       printf 'mode=%s\n' "$CONFIG_MODE"
       printf 'capture_extent=%s\n' "$CONFIG_CAPTURE_EXTENT"
+      printf 'phase=%s\n' "$phase"
+      printf 'subject_class=%s\n' "$subject_class"
+      printf 'subject_address=%s\n' "$subject_address"
+      printf 'linger_until=%s\n' "$linger_until"
     } > "$tmp"
   )
   mv -f "$tmp" "$ACTIVITY_FILE"
@@ -851,10 +886,315 @@ join_clip() {
   printf '%s\n' "$out"
 }
 
+
+windows_json() {
+  if [[ -n ${SHADOWPLAY_WINDOWS_JSON:-} ]]; then
+    printf '%s\n' "$SHADOWPLAY_WINDOWS_JSON"
+    return
+  fi
+  if [[ -n ${SHADOWPLAY_WINDOWS_FILE:-} && -r ${SHADOWPLAY_WINDOWS_FILE} ]]; then
+    cat "$SHADOWPLAY_WINDOWS_FILE"
+    return
+  fi
+  if command -v "$HYPRCTL_BIN" >/dev/null 2>&1; then
+    "$HYPRCTL_BIN" clients -j 2>/dev/null || printf '[]\n'
+    return
+  fi
+  printf '[]\n'
+}
+
+monitors_json() {
+  if [[ -n ${SHADOWPLAY_MONITORS_JSON:-} ]]; then
+    printf '%s\n' "$SHADOWPLAY_MONITORS_JSON"
+    return
+  fi
+  if [[ -n ${SHADOWPLAY_MONITORS_FILE:-} && -r ${SHADOWPLAY_MONITORS_FILE} ]]; then
+    cat "$SHADOWPLAY_MONITORS_FILE"
+    return
+  fi
+  if command -v "$HYPRCTL_BIN" >/dev/null 2>&1; then
+    "$HYPRCTL_BIN" monitors -j 2>/dev/null || printf '[]\n'
+    return
+  fi
+  printf '[]\n'
+}
+
+is_chrome_class() {
+  local class="${1,,}"
+  class=${class##*.}
+  case "$class" in
+  waybar|walker|hyprlock)
+    return 0
+    ;;
+  esac
+  return 1
+}
+
+is_sticky_glance_class() {
+  local class="${1,,}"
+  class=${class##*.}
+  case "$class" in
+  discord)
+    return 0
+    ;;
+  esac
+  return 1
+}
+
+window_allowed() {
+  local class="$1"
+  [[ -n $class ]] || return 1
+  is_chrome_class "$class" && return 1
+  is_sticky_glance_class "$class" && return 1
+  case "$CONFIG_FILTER" in
+  all) return 0 ;;
+  allowlist)
+    local rule
+    [[ -n $CONFIG_MATCH_LIST ]] || return 1
+    while IFS= read -r rule; do
+      [[ -n $rule ]] || continue
+      [[ $class =~ $rule ]] && return 0
+    done <<<"$CONFIG_MATCH_LIST"
+    return 1
+    ;;
+  denylist)
+    local rule
+    while IFS= read -r rule; do
+      [[ -n $rule ]] || continue
+      [[ $class =~ $rule ]] && return 1
+    done <<<"$CONFIG_BLACKLIST"
+    return 0
+    ;;
+  *) return 0 ;;
+  esac
+}
+
+parse_windows() {
+  local clients monitors names
+  clients=$(windows_json)
+  monitors=$(monitors_json)
+  names=$(list_monitor_names)
+  SHADOWPLAY_CLIENTS_JSON="$clients" SHADOWPLAY_MONITORS_JSON="$monitors" SHADOWPLAY_MONITOR_NAMES="$names" python3 -c '
+import json, os, sys
+def load(raw):
+    try:
+        data = json.loads(raw or "[]")
+    except Exception:
+        return []
+    if isinstance(data, dict):
+        return [data]
+    return data if isinstance(data, list) else []
+clients = load(os.environ.get("SHADOWPLAY_CLIENTS_JSON", "[]"))
+monitors = load(os.environ.get("SHADOWPLAY_MONITORS_JSON", "[]"))
+id_to_name = {}
+gsr_names = [n for n in os.environ.get("SHADOWPLAY_MONITOR_NAMES", "").splitlines() if n]
+for i, name in enumerate(gsr_names):
+    id_to_name[str(i)] = name
+    id_to_name[name] = name
+for mon in monitors:
+    if not isinstance(mon, dict):
+        continue
+    name = str(mon.get("name") or "")
+    mid = mon.get("id")
+    if name:
+        id_to_name[name] = name
+    if name and mid is not None:
+        id_to_name[str(mid)] = name
+focus = os.environ.get("SHADOWPLAY_FOCUSED_ADDRESS", "")
+best_hist = None
+rows = []
+for item in clients:
+    if not isinstance(item, dict):
+        continue
+    klass = str(item.get("class") or item.get("initialClass") or "")
+    initial = str(item.get("initialClass") or klass)
+    raw_mon = item.get("monitor")
+    monitor = ""
+    if raw_mon is not None and raw_mon != "":
+        key = str(raw_mon)
+        monitor = id_to_name.get(key, key if not str(raw_mon).isdigit() else "")
+        if not monitor and str(raw_mon).isdigit():
+            monitor = id_to_name.get(str(raw_mon), "")
+    address = str(item.get("address") or "")
+    hist = item.get("focusHistoryID")
+    focused = item.get("focused") is True or item.get("active") is True
+    if hist == 0:
+        focused = True
+    if focus and address == focus:
+        focused = True
+    rows.append((klass, initial, monitor, address, focused, hist if isinstance(hist, int) else 10**9))
+if not any(r[4] for r in rows):
+    with_hist = [r for r in rows if r[5] != 10**9]
+    if with_hist:
+        winner = min(with_hist, key=lambda r: r[5])
+        rows = [r[:4] + (r is winner,) + r[5:] for r in rows]
+for klass, initial, monitor, address, focused, _hist in rows:
+    print("|".join([klass.replace("|"," "), initial.replace("|"," "), monitor.replace("|"," "), address.replace("|"," "), "1" if focused else "0"]))
+'
+}
+
+focused_window_line() {
+  local line
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    if [[ $line == *"|1" ]]; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+  done < <(parse_windows)
+  return 1
+}
+
+window_exists() {
+  local address="$1" class="$2" monitor="$3"
+  local line klass mon addr
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    IFS='|' read -r klass _ mon addr _ <<<"$line"
+    if [[ -n $address && $addr == "$address" ]]; then
+      return 0
+    fi
+    if [[ -z $address && $klass == "$class" && ( -z $monitor || $mon == "$monitor" ) ]]; then
+      return 0
+    fi
+  done < <(parse_windows)
+  return 1
+}
+
+find_class_on_monitor() {
+  local class="$1" monitor="$2"
+  local line klass mon addr
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    IFS='|' read -r klass _ mon addr _ <<<"$line"
+    if [[ $klass == "$class" && $mon == "$monitor" ]]; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+  done < <(parse_windows)
+  return 1
+}
+
+follow_session_active() {
+  local phase
+  phase=$(activity_value phase)
+  [[ $phase == armed || $phase == live || $phase == linger ]]
+}
+
+go_armed() {
+  if buffer_running; then
+    stop_recorder
+    discard_all_segments
+  fi
+  write_activity false "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" armed "-" "-" "-"
+}
+
+go_live_on() {
+  local monitor="$1" class="$2" address="$3"
+  local saved="$CONFIG_MONITOR"
+  CONFIG_MONITOR="$monitor"
+  if buffer_running; then
+    if live_capture_differs "$monitor"; then
+      split_and_restart
+    fi
+  else
+    launch_recorder
+  fi
+  CONFIG_MONITOR="$saved"
+  write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$address" "-"
+}
+
+enter_linger() {
+  local until
+  until=$(( $(now_epoch) + CONFIG_SECONDS ))
+  write_activity true "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" linger "$(activity_value subject_class)" "$(activity_value subject_address)" "$until"
+}
+
+cmd_follow_tick() {
+  load_config
+  [[ $CONFIG_MODE == follow ]] || return 0
+  follow_session_active || return 0
+
+  local phase monitor subject_class subject_address linger_until
+  phase=$(activity_value phase)
+  monitor=$(activity_value monitor)
+  subject_class=$(activity_value subject_class)
+  subject_address=$(activity_value subject_address)
+  linger_until=$(activity_value linger_until)
+
+  local line class initial win_mon win_addr focused
+  line=$(focused_window_line || true)
+  if [[ -n $line ]]; then
+    IFS='|' read -r class initial win_mon win_addr focused <<<"$line"
+  else
+    class=""
+    win_mon=""
+    win_addr=""
+  fi
+
+  local subject_alive="false"
+  if [[ -n $subject_address ]] && window_exists "$subject_address" "$subject_class" ""; then
+    subject_alive="true"
+  elif [[ -n $subject_class ]] && window_exists "" "$subject_class" "$monitor"; then
+    subject_alive="true"
+  fi
+
+  if [[ -n $class ]] && window_allowed "$class"; then
+    if [[ $phase == linger && $class == "$subject_class" && $win_mon == "$monitor" ]]; then
+      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$win_addr" "-"
+      return 0
+    fi
+    if [[ $phase == live || $phase == linger ]]; then
+      if [[ $win_mon == "$monitor" ]]; then
+        write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$win_addr" "-"
+        return 0
+      fi
+      go_live_on "$win_mon" "$class" "$win_addr"
+      return 0
+    fi
+    go_live_on "$win_mon" "$class" "$win_addr"
+    return 0
+  fi
+
+  # Chrome / not allowed: Sticky while subject lives.
+  if [[ $subject_alive == true ]]; then
+    if [[ $phase == linger ]]; then
+      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$subject_class" "$subject_address" "-"
+    fi
+    return 0
+  fi
+
+  if [[ $phase == live ]]; then
+    if buffer_running; then
+      enter_linger
+    else
+      go_armed
+    fi
+    return 0
+  fi
+
+  if [[ $phase == linger ]]; then
+    local now
+    now=$(now_epoch)
+    if [[ $linger_until =~ ^[0-9]+$ ]] && (( now >= linger_until )); then
+      go_armed
+    fi
+    return 0
+  fi
+}
+
 cmd_start() {
   load_config
   apply_start_flags "$@"
   write_config
+  if [[ $CONFIG_MODE == follow ]]; then
+    if ! follow_session_active; then
+      write_activity false "" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" armed "-" "-" "-"
+    fi
+    cmd_follow_tick
+    cmd_status --json
+    return 0
+  fi
   local monitor
   monitor=$(resolve_monitor)
   if buffer_running; then
@@ -871,7 +1211,7 @@ cmd_start() {
 cmd_stop() {
   stop_recorder
   discard_all_segments
-  write_activity false "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$(activity_value last_clip)"
+  write_activity false "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$(activity_value last_clip)" "" off "-" "-" "-"
 }
 
 cmd_save() {
@@ -908,12 +1248,26 @@ print_status_json() {
   printf '"ipc":%s,' "$(json_string "$IPC")"
   printf '"outputDir":%s,' "$(json_string "$(output_dir)")"
   printf '"lastClip":%s,' "$(json_string_or_null "${6:-}")"
+  local phase armed linger
+  phase=$(activity_value phase)
+  [[ -n $phase ]] || phase=$([[ $running == true ]] && echo live || echo off)
+  armed=false
+  linger=false
+  [[ $phase == armed ]] && armed=true
+  [[ $phase == linger ]] && linger=true
+  printf '"phase":%s,' "$(json_string "$phase")"
+  printf '"armed":%s,' "$(json_bool "$armed")"
+  printf '"linger":%s,' "$(json_bool "$linger")"
+  printf '"subject":%s,' "$(json_string_or_null "$(activity_value subject_class)")"
   print_settings_fields
   printf '}\n'
 }
 
 cmd_status() {
   load_config
+  if [[ $CONFIG_MODE == follow ]]; then
+    cmd_follow_tick
+  fi
   local json="false" pid="" running="false"
   if [[ ${1:-} == --json ]]; then
     json="true"
@@ -1004,6 +1358,7 @@ cmd_settings_show() {
 
 cmd_settings_set() {
   load_config
+  local prev_mode="$CONFIG_MODE"
   local key="${1:-}" value="${2:-}"
   [[ -n $key ]] || die_usage "settings set requires a key"
   case "$key" in
@@ -1071,7 +1426,29 @@ cmd_settings_set() {
     ;;
   esac
   write_config
-  if buffer_running; then
+  if [[ $key == mode && $prev_mode != "$CONFIG_MODE" ]]; then
+    if buffer_running; then
+      flush_segment
+      stop_recorder
+    fi
+    if [[ $CONFIG_MODE == follow ]]; then
+      write_activity false "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" armed "-" "-" "-"
+      cmd_follow_tick
+    elif buffer_running || [[ $(activity_value phase) == live || $(activity_value phase) == linger ]]; then
+      launch_recorder
+    fi
+  elif [[ $CONFIG_MODE == follow ]] && follow_session_active; then
+    local monitor
+    monitor=$(activity_value monitor)
+    if buffer_running && [[ -n $monitor ]] && live_capture_differs "$monitor"; then
+      local saved="$CONFIG_MONITOR"
+      CONFIG_MONITOR="$monitor"
+      split_and_restart
+      CONFIG_MONITOR="$saved"
+      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(now_epoch)" "$(activity_value phase)" "$(activity_value subject_class)" "$(activity_value subject_address)" "$(activity_value linger_until)"
+    fi
+    cmd_follow_tick
+  elif buffer_running; then
     local monitor
     monitor=$(resolve_monitor)
     if live_capture_differs "$monitor"; then
@@ -1133,6 +1510,7 @@ main() {
     *) die_usage "settings expects show or set" ;;
     esac
     ;;
+  tick) cmd_follow_tick; cmd_status --json ;;
   doctor) cmd_doctor ;;
   *) die_usage "unknown command: $cmd" ;;
   esac

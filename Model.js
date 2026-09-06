@@ -30,6 +30,10 @@ function parseStatus(text) {
     ipc: String(status.ipc || ""),
     outputDir: String(status.outputDir || ""),
     lastClip: String(status.lastClip || ""),
+    phase: String(status.phase || (status.running === true ? "live" : "off")),
+    armed: status.armed === true || status.phase === "armed",
+    linger: status.linger === true || status.phase === "linger",
+    subject: String(status.subject || ""),
     mode: normalizeMode(status.mode),
     filter: normalizeFilter(status.filter),
     captureExtent: normalizeCaptureExtent(status.captureExtent),
@@ -155,13 +159,30 @@ function audioOptions() {
 }
 
 function statusLabel(status) {
-  if (!status || status.running !== true) return "Buffer off"
+  if (!status) return "Buffer off"
+  if (status.phase === "armed" || status.armed === true) return "Armed"
+  if (status.phase === "linger" || status.linger === true) {
+    var lingerMon = status.monitor || "monitor"
+    return "Linger · " + lingerMon
+  }
+  if (status.running !== true) return "Buffer off"
   var monitor = status.monitor || "monitor"
   return monitor + " · last " + formatReplayLength(status.seconds)
 }
 
 function modeOptions() {
-  return [{ value: "monitor", label: "Monitor" }]
+  return [
+    { value: "monitor", label: "Monitor" },
+    { value: "follow", label: "Follow active window" }
+  ]
+}
+
+function filterOptions() {
+  return [
+    { value: "all", label: "All" },
+    { value: "allowlist", label: "Allowlist" },
+    { value: "denylist", label: "Denylist" }
+  ]
 }
 
 function hotkeyLuaSnippet() {
