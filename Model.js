@@ -56,6 +56,27 @@ function parseEncoder(encoder) {
   }
 }
 
+function parseWindows(text) {
+  var rows = parseJson(text, [])
+  if (!Array.isArray(rows)) return []
+  var out = []
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i]
+    if (!row) continue
+    var klass = String(row.class || row.initialClass || "")
+    if (!klass) continue
+    out.push({
+      className: klass,
+      initialClass: String(row.initialClass || klass),
+      title: String(row.title || ""),
+      monitor: String(row.monitor || ""),
+      address: String(row.address || ""),
+      focused: row.focused === true
+    })
+  }
+  return out
+}
+
 function parseMonitors(text) {
   var rows = parseJson(text, [])
   if (!Array.isArray(rows)) return []

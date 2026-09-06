@@ -524,4 +524,97 @@ write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":f
 status=$("$helper" tick)
 echo "$status" | jq -e '.subject == "firefox" and .phase == "live"' >/dev/null   || fail "Filter=All should still skip built-in chrome: $status"
 "$helper" stop
+
+# Follow Filter=Allowlist: class match, sticky, priority, regex, live list edit, split.
+write_windows '[]'
+"$helper" stop >/dev/null 2>&1 || true
+"$helper" settings set mode follow >/dev/null
+"$helper" settings set filter allowlist >/dev/null
+"$helper" settings set matchList "firefox,kitty" >/dev/null
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.filter == "allowlist" and .matchList[0] == "firefox" and .matchList[1] == "kitty"' >/dev/null \
+  || fail "allowlist matchList not stored: $settings"
+
+write_windows '[{"class":"discord","title":"Friends","monitor":"DP-1","address":"0xdc","focused":true}]'
+export SHADOWPLAY_NOW=10000
+"$helper" start >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.armed == true and .running == false and .phase == "armed"' >/dev/null \
+  || fail "allowlist should Arm on a non-match: $status"
+
+write_windows '[{"class":"firefox","title":"Mozilla Firefox","initialClass":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "firefox" and .monitor == "DP-1"' >/dev/null \
+  || fail "allowlist focused match should go Live: $status"
+
+write_windows '[{"class":"firefox","title":"Mozilla Firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"discord","title":"Friends","monitor":"DP-1","address":"0xdc","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "firefox" and .phase == "live" and .monitor == "DP-1"' >/dev/null \
+  || fail "non-match glance should Sticky: $status"
+[[ ! -r $segment_index ]] || fail "allowlist Sticky Split"
+
+write_windows '[{"class":"kitty","title":"term","monitor":"HDMI-A-1","address":"0xkit","focused":true},{"class":"firefox","title":"Mozilla Firefox","monitor":"DP-1","address":"0xff","focused":false}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "kitty" and .monitor == "HDMI-A-1" and .phase == "live"' >/dev/null \
+  || fail "focused match on another monitor should Split: $status"
+[[ -r $segment_index ]] || fail "allowlist other-monitor match did not Split"
+
+write_windows '[{"class":"firefox","title":"Mozilla Firefox","monitor":"HDMI-A-1","address":"0xff","focused":false},{"class":"kitty","title":"term","monitor":"HDMI-A-1","address":"0xkit","focused":false},{"class":"waybar","monitor":"HDMI-A-1","address":"0xbar","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "kitty" and .monitor == "HDMI-A-1"' >/dev/null \
+  || fail "chrome glance should keep Sticky kitty: $status"
+
+# Neither match focused: list order is priority (firefox first) once the Subject is gone.
+write_windows '[{"class":"firefox","title":"Mozilla Firefox","monitor":"HDMI-A-1","address":"0xff","focused":false},{"class":"kitty","title":"term","monitor":"HDMI-A-1","address":"0xkit","focused":false}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "kitty"' >/dev/null \
+  || fail "living Subject should stay Sticky when no match is focused: $status"
+
+write_windows '[{"class":"firefox","title":"Mozilla Firefox","monitor":"HDMI-A-1","address":"0xff","focused":false}]'
+# kitty gone; neither match focused; priority should pick firefox (first rule)
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "firefox" and .monitor == "HDMI-A-1"' >/dev/null \
+  || fail "priority should pick first Match List rule when none focused: $status"
+[[ $(grep -c . "$segment_index" || true) == 1 ]] || fail "same-monitor priority pick should not Split again"
+
+"$helper" settings set matchList "^fire.*" >/dev/null
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.matchList[0] == "^fire.*"' >/dev/null || fail "regex matchList not stored: $settings"
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "firefox" and .phase == "live"' >/dev/null \
+  || fail "regex should keep firefox: $status"
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 1 ]] || fail "editing Match List while Live Split, got $segment_count"
+
+windows=$("$helper" windows --json)
+echo "$windows" | jq -e '.[0].class == "firefox" and .[0].title == "Mozilla Firefox"' >/dev/null \
+  || fail "windows json should expose class and title: $windows"
+echo "$windows" | jq -e '.[0].class != .[0].title' >/dev/null \
+  || fail "windows json should not use title as class: $windows"
+
+"$helper" stop >/dev/null
+"$helper" settings set matchList "Firefox" >/dev/null
+write_windows '[{"class":"discord","title":"Firefox","monitor":"DP-1","address":"0xd","focused":true}]'
+export SHADOWPLAY_NOW=10500
+"$helper" start >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.armed == true and .running == false and .phase == "armed"' >/dev/null \
+  || fail "title must not match Match List rules: $status"
+
+write_windows '[{"class":"Navigator","initialClass":"firefox","title":"Mozilla Firefox","monitor":"DP-1","address":"0xff","focused":true}]'
+"$helper" settings set matchList "firefox" >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "Navigator" and .monitor == "DP-1"' >/dev/null \
+  || fail "initialClass should match Match List: $status"
+
+"$helper" stop >/dev/null
+"$helper" settings set matchList "steam,firefox" >/dev/null
+write_windows '[{"class":"firefox","title":"Mozilla Firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"steam","title":"Steam","monitor":"DP-1","address":"0xst","focused":false},{"class":"waybar","title":"bar","monitor":"DP-1","address":"0xbar","focused":true}]'
+export SHADOWPLAY_NOW=11000
+"$helper" start >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.running == true and .subject == "steam" and .monitor == "DP-1"' >/dev/null \
+  || fail "priority should pick earlier Match List rule when none focused: $status"
+
+"$helper" stop
 echo OK
