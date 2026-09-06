@@ -5,8 +5,9 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 helper="$root/bin/omarchy-shadowplay"
 fake_gsr="$root/tests/fake-gsr"
 fake_cli="$root/tests/fake-gsr-cli"
+fake_ffmpeg="$root/tests/fake-ffmpeg"
 
-chmod +x "$helper" "$fake_gsr" "$fake_cli"
+chmod +x "$helper" "$fake_gsr" "$fake_cli" "$fake_ffmpeg"
 
 work=$(mktemp -d)
 session_pid=""
@@ -20,8 +21,10 @@ export XDG_VIDEOS_DIR="$work/videos"
 export SHADOWPLAY_FAKE_DIR="$work/fake"
 export SHADOWPLAY_GSR_BIN="$fake_gsr"
 export SHADOWPLAY_GSR_CLI_BIN="$fake_cli"
+export SHADOWPLAY_FFMPEG_BIN="$fake_ffmpeg"
 export SHADOWPLAY_FOCUSED_MONITOR="DP-1"
 export SHADOWPLAY_NOTIFY=false
+export SHADOWPLAY_NOW=800
 
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR" "$XDG_VIDEOS_DIR" "$SHADOWPLAY_FAKE_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
@@ -39,6 +42,19 @@ assert_file_contains() {
 grep -F "exec -a omarchy-shadowplay-gsr" "$helper" >/dev/null \
   || fail "helper must launch the recorder as omarchy-shadowplay-gsr"
 
+replay_dir="$XDG_VIDEOS_DIR/Replays"
+segment_index="$XDG_STATE_HOME/omarchy-shadowplay/segments/index"
+
+public_clips() {
+  find "$replay_dir" -maxdepth 1 -type f -name '*.mp4' 2>/dev/null | sort
+}
+
+assert_no_gsr_leftovers() {
+  local leftovers
+  leftovers=$(find "$SHADOWPLAY_FAKE_DIR" -maxdepth 1 -type f -name 'gsr-save-*.mp4' 2>/dev/null || true)
+  [[ -z $leftovers ]] || fail "save-replay leftovers in public/fake dir: $leftovers"
+}
+
 "$helper" start >/dev/null
 [[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "start did not launch the recorder"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-w"
@@ -48,6 +64,7 @@ assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "60"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-a"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "default_output"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-ipc"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "$XDG_RUNTIME_DIR/omarchy-shadowplay/gsr-output"
 
 status=$("$helper" status --json)
 echo "$status" | jq -e '.running == true and .monitor == "DP-1" and .seconds == 60 and .audio == "desktop"' >/dev/null \
@@ -58,12 +75,19 @@ echo "$status" | jq -e '.encoder.codec == "auto" and .encoder.fps == 60 and .enc
   || fail "status json missing encoder knobs: $status"
 
 clip=$("$helper" save)
-[[ $clip == "$SHADOWPLAY_FAKE_DIR/replay.mp4" ]] || fail "save returned $clip"
+[[ $clip == "$replay_dir/Replay-800.mp4" ]] || fail "save returned $clip"
+[[ -e $clip ]] || fail "Clip was not written"
 [[ ! -e $SHADOWPLAY_FAKE_DIR/saved-seconds ]] || fail "default save should not pass a seconds override"
+[[ ! -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "save without a Split should not stitch"
+[[ $(public_clips) == "$clip" ]] || fail "Replays should contain only the Clip: $(public_clips)"
+assert_no_gsr_leftovers
 
+export SHADOWPLAY_NOW=801
 clip=$("$helper" save 30)
 [[ -e $SHADOWPLAY_FAKE_DIR/saved-seconds ]] || fail "save 30 did not record seconds"
 [[ $(<"$SHADOWPLAY_FAKE_DIR/saved-seconds") == 30 ]] || fail "save 30 stored the wrong duration"
+[[ $clip == "$replay_dir/Replay-801.mp4" ]] || fail "save 30 returned $clip"
+assert_no_gsr_leftovers
 
 "$helper" stop
 [[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "stop left the recorder running"
@@ -145,4 +169,105 @@ fi
 kill "$session_pid" 2>/dev/null || true
 wait "$session_pid" 2>/dev/null || true
 session_pid=""
+rm -f "$SHADOWPLAY_FAKE_DIR/session-recording" "$SHADOWPLAY_FAKE_DIR/session.pid" "$SHADOWPLAY_FAKE_DIR/session.killed"
+
+rm -rf "$replay_dir"
+export SHADOWPLAY_NOW=1000
+"$helper" start --monitor=DP-1 --seconds=60 --audio=desktop >/dev/null
+before=$(public_clips || true)
+"$helper" start --monitor=HDMI-A-1 >/dev/null
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Split left capture stopped"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "HDMI-A-1"
+[[ -r $segment_index ]] || fail "Split did not keep a Segment"
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 1 ]] || fail "expected 1 Segment after first Split, got $segment_count"
+status=$("$helper" status --json)
+echo "$status" | jq -e '.running == true and .monitor == "HDMI-A-1"' >/dev/null \
+  || fail "status after Split: $status"
+[[ $(public_clips || true) == "$before" ]] || fail "Split leaked a file into Replays"
+assert_no_gsr_leftovers
+
+clip=$("$helper" save)
+[[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Save after Split did not join Segments"
+[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 2 ]] || fail "Save after Split should join 1 Segment + live"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "-filter_complex"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "scale=5120:1440"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "concat=n=2:v=1:a=1"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "-c:a"
+if grep -Fq -- "-c copy" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"; then
+  fail "join used stream copy instead of re-encoding"
+fi
+if grep -Fxq -- "-an" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"; then
+  fail "Save after Split stripped audio from a desktop Replay Buffer"
+fi
+[[ $clip == "$replay_dir/Replay-1000.mp4" ]] || fail "joined Clip path was $clip"
+[[ -e $clip ]] || fail "joined Clip was not written"
+[[ $(public_clips) == "$clip" ]] || fail "Replays should contain only the joined Clip: $(public_clips)"
+assert_no_gsr_leftovers
+
+"$helper" start --monitor=DP-1 >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 2 ]] || fail "A→B→A should keep both overlapping Segments, got $segment_count"
+[[ $(public_clips) == "$clip" ]] || fail "bounce Split leaked into Replays"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list"
+export SHADOWPLAY_NOW=1001
+clip=$("$helper" save)
+[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 3 ]] || fail "bounce Save should join both Segments + live"
+[[ $clip == "$replay_dir/Replay-1001.mp4" ]] || fail "bounce Clip path was $clip"
+[[ $(public_clips | wc -l) == 2 ]] || fail "expected two public Clips after two Saves, got $(public_clips)"
+assert_no_gsr_leftovers
+
+"$helper" settings set monitor HDMI-A-1 >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 3 ]] || fail "live settings Split should flush another Segment, got $segment_count"
+assert_no_gsr_leftovers
+
+"$helper" settings set fps 30 >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 4 ]] || fail "encoder settings should Split while Live, got $segment_count"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "30"
+"$helper" settings set filter allowlist >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 4 ]] || fail "filter should not Split, got $segment_count"
+assert_no_gsr_leftovers
+
+export SHADOWPLAY_NOW=1100
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list"
+clip=$("$helper" save)
+[[ ! -r $segment_index ]] || fail "Segments older than the Replay Window were kept"
+[[ ! -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "expired Segments should not be stitched"
+[[ $clip == "$replay_dir/Replay-1100.mp4" ]] || fail "Save after discard should be one Clip, got $clip"
+[[ -e $clip ]] || fail "discard Clip was not written"
+assert_no_gsr_leftovers
+
+"$helper" stop
+
+export SHADOWPLAY_NOW=3000
+rm -rf "$replay_dir"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+"$helper" start --monitor=DP-1 --seconds=60 --audio=none >/dev/null
+"$helper" settings set audio desktop >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 1 ]] || fail "audio change should Split, got $segment_count"
+clip=$("$helper" save)
+[[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Save after audio Split did not join"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "anullsrc"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "concat=n=2:v=1:a=1"
+if grep -Fxq -- "-an" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"; then
+  fail "audio Split join stripped audio"
+fi
+"$helper" stop
+
+export SHADOWPLAY_NOW=4000
+rm -rf "$replay_dir"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+"$helper" start --monitor=DP-1 --seconds=60 --audio=desktop >/dev/null
+export SHADOWPLAY_NOW=4060
+"$helper" start --monitor=HDMI-A-1 >/dev/null
+export SHADOWPLAY_NOW=4110
+clip=$("$helper" save)
+[[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Save after delayed Split did not join"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "-ss"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "50"
+"$helper" stop
 echo OK

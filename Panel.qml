@@ -63,6 +63,17 @@ Panel {
       root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
+  function applySetting(key, value) {
+    var values = {}
+    values[key] = value
+    root.persistSettings(values)
+    if (root.helperPath === "" || actionProc.running) return
+    root.busy = true
+    root.lastError = ""
+    actionProc.command = root.runHelper(["settings", "set", key, String(value)])
+    actionProc.running = true
+  }
+
   function runHelper(args) {
     var command = ["bash", root.helperPath]
     for (var i = 0; i < args.length; i++) command.push(args[i])
@@ -238,7 +249,7 @@ Panel {
           options: root.monitorChoices
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
-          onChanged: function(value) { root.persistSettings({ monitor: value }) }
+          onChanged: function(value) { root.applySetting("monitor", value) }
         }
 
         Dropdown {
@@ -249,7 +260,7 @@ Panel {
           options: root.secondsChoices
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
-          onChanged: function(value) { root.persistSettings({ seconds: Model.boundedInteger(value, 60, 15, 600) }) }
+          onChanged: function(value) { root.applySetting("seconds", Model.boundedInteger(value, 60, 15, 600)) }
         }
 
         Dropdown {
@@ -260,7 +271,7 @@ Panel {
           options: root.audioChoices
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
-          onChanged: function(value) { root.persistSettings({ audio: Model.normalizeAudio(value) }) }
+          onChanged: function(value) { root.applySetting("audio", Model.normalizeAudio(value)) }
         }
 
         Button {
