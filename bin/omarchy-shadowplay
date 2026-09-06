@@ -28,6 +28,8 @@ DEFAULT_AUDIO="desktop"
 DEFAULT_MODE="monitor"
 DEFAULT_FILTER="all"
 DEFAULT_CAPTURE_EXTENT="monitor"
+# Filter=All still uses is_chrome_class even if the user empties this Denylist seed.
+DEFAULT_BLACKLIST=$'waybar\nwalker\nhyprlock'
 DEFAULT_CODEC="auto"
 DEFAULT_FPS=60
 DEFAULT_QUALITY=40000
@@ -52,7 +54,7 @@ CONFIG_CURSOR="$DEFAULT_CURSOR"
 CONFIG_FRAMERATE_MODE="$DEFAULT_FRAMERATE_MODE"
 CONFIG_BITRATE_MODE="$DEFAULT_BITRATE_MODE"
 CONFIG_MATCH_LIST=""
-CONFIG_BLACKLIST=""
+CONFIG_BLACKLIST="$DEFAULT_BLACKLIST"
 CONFIG_OUTPUT_DIR=""
 CONFIG_REGION=""
 
@@ -99,6 +101,8 @@ Usage:
   $PROGRAM settings set audio <none|desktop|both>
   $PROGRAM settings set mode <monitor|follow|pin|region>
   $PROGRAM settings set filter <all|allowlist|denylist>
+  $PROGRAM settings set matchList <csv>
+  $PROGRAM settings set blacklist <csv>
   $PROGRAM settings set captureExtent <monitor|window>
   $PROGRAM settings set codec <name>
   $PROGRAM settings set fps <1-240>
@@ -202,6 +206,7 @@ print_settings_fields() {
 }
 
 reset_config_defaults() {
+  BLACKLIST_PRESENT=false
   CONFIG_MONITOR=""
   CONFIG_SECONDS="$DEFAULT_SECONDS"
   CONFIG_AUDIO="$DEFAULT_AUDIO"
@@ -215,7 +220,7 @@ reset_config_defaults() {
   CONFIG_FRAMERATE_MODE="$DEFAULT_FRAMERATE_MODE"
   CONFIG_BITRATE_MODE="$DEFAULT_BITRATE_MODE"
   CONFIG_MATCH_LIST=""
-  CONFIG_BLACKLIST=""
+  CONFIG_BLACKLIST="$DEFAULT_BLACKLIST"
   CONFIG_OUTPUT_DIR=""
   CONFIG_REGION=""
 }
@@ -294,6 +299,7 @@ load_config() {
     blacklist)
       CONFIG_BLACKLIST="${value//,/
 }"
+      BLACKLIST_PRESENT=true
       ;;
     outputDir)
       config_value_safe "$value" && CONFIG_OUTPUT_DIR="$value"
@@ -303,6 +309,9 @@ load_config() {
       ;;
     esac
   done < "$CONFIG_FILE"
+  if [[ ${BLACKLIST_PRESENT:-false} != true ]]; then
+    CONFIG_BLACKLIST="$DEFAULT_BLACKLIST"
+  fi
   clamp_seconds
   clamp_fps
 }
@@ -1102,31 +1111,37 @@ is_sticky_glance_class() {
   return 1
 }
 
+class_matches_rules() {
+  local class="$1" rules="$2"
+  local rule
+  [[ -n $rules ]] || return 1
+  while IFS= read -r rule; do
+    [[ -n $rule ]] || continue
+    [[ $class =~ $rule ]] && return 0
+  done <<<"$rules"
+  return 1
+}
+
 window_allowed() {
   local class="$1"
   [[ -n $class ]] || return 1
-  is_chrome_class "$class" && return 1
-  is_sticky_glance_class "$class" && return 1
   case "$CONFIG_FILTER" in
-  all) return 0 ;;
   allowlist)
-    local rule
-    [[ -n $CONFIG_MATCH_LIST ]] || return 1
-    while IFS= read -r rule; do
-      [[ -n $rule ]] || continue
-      [[ $class =~ $rule ]] && return 0
-    done <<<"$CONFIG_MATCH_LIST"
-    return 1
+    class_matches_rules "$class" "$CONFIG_MATCH_LIST"
     ;;
   denylist)
-    local rule
-    while IFS= read -r rule; do
-      [[ -n $rule ]] || continue
-      [[ $class =~ $rule ]] && return 1
-    done <<<"$CONFIG_BLACKLIST"
+    class_matches_rules "$class" "$CONFIG_BLACKLIST" && return 1
     return 0
     ;;
-  *) return 0 ;;
+  all)
+    is_chrome_class "$class" && return 1
+    is_sticky_glance_class "$class" && return 1
+    return 0
+    ;;
+  *)
+    is_chrome_class "$class" && return 1
+    return 0
+    ;;
   esac
 }
 
@@ -1600,6 +1615,15 @@ cmd_settings_set() {
     fi
     CONFIG_REGION="$value"
     ;;
+  matchList)
+    CONFIG_MATCH_LIST="${value//,/
+}"
+    ;;
+  blacklist)
+    CONFIG_BLACKLIST="${value//,/
+}"
+    BLACKLIST_PRESENT=true
+    ;;
   *)
     die "unknown setting: $key"
     ;;
@@ -1615,6 +1639,10 @@ cmd_settings_set() {
       cmd_follow_tick
     elif buffer_running || [[ $(activity_value phase) == live || $(activity_value phase) == linger ]]; then
       launch_recorder
+    fi
+  elif [[ $key == matchList || $key == blacklist || $key == filter ]]; then
+    if [[ $CONFIG_MODE == follow ]] && follow_session_active; then
+      cmd_follow_tick
     fi
   elif [[ $CONFIG_MODE == follow ]] && follow_session_active; then
     local monitor

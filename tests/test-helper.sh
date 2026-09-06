@@ -84,8 +84,9 @@ assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "$XDG_RUNTIME_DIR/omarchy-s
 status=$("$helper" status --json)
 echo "$status" | jq -e '.running == true and .monitor == "DP-1" and .seconds == 60 and .audio == "desktop"' >/dev/null \
   || fail "status json after start: $status"
-echo "$status" | jq -e '.mode == "monitor" and .filter == "all" and .captureExtent == "monitor" and (.matchList | length) == 0 and (.blacklist | length) == 0' >/dev/null \
+echo "$status" | jq -e '.mode == "monitor" and .filter == "all" and .captureExtent == "monitor" and (.matchList | length) == 0 and (.blacklist | length) == 3' >/dev/null \
   || fail "status json missing mode defaults: $status"
+echo "$status" | jq -e '.blacklist == ["waybar","walker","hyprlock"]' >/dev/null   || fail "new install blacklist should be Omarchy chrome: $status"
 echo "$status" | jq -e '.encoder.codec == "auto" and .encoder.fps == 60 and .encoder.quality == 40000 and .encoder.cursor == true and .encoder.framerateMode == "cfr" and .encoder.bitrateMode == "cbr"' >/dev/null \
   || fail "status json missing encoder knobs: $status"
 
@@ -148,6 +149,9 @@ grep -q 'between' "$work/sec-err" || fail "over-max seconds error was unclear: $
 "$helper" stop >/dev/null 2>&1 || true
 mkdir -p "$XDG_CONFIG_HOME/omarchy-shadowplay"
 printf 'monitor=\nseconds=60\naudio=desktop\n' > "$XDG_CONFIG_HOME/omarchy-shadowplay/config"
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.blacklist == ["waybar","walker","hyprlock"]' >/dev/null \
+  || fail "omitted blacklist key should seed Omarchy chrome: $settings"
 "$helper" start >/dev/null
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-w"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "DP-1"
@@ -467,5 +471,57 @@ clip=$("$helper" save)
 [[ $clip == "$replay_dir/Replay-9000.mp4" ]] || fail "region re-pick Clip path was $clip"
 [[ -e $clip ]] || fail "region re-pick Clip was not written"
 assert_no_gsr_leftovers
+"$helper" stop
+
+# Follow Filter=Denylist: pre-populated Blacklist, empty is louder than All, Sticky, no Split.
+"$helper" settings set mode follow >/dev/null
+"$helper" settings set filter denylist >/dev/null
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.filter == "denylist" and (.blacklist == ["waybar","walker","hyprlock"])' >/dev/null   || fail "denylist should show pre-populated Blacklist: $settings"
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
+export SHADOWPLAY_NOW=10000
+"$helper" start >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "firefox"' >/dev/null   || fail "denylist start on firefox: $status"
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "firefox"' >/dev/null   || fail "blacklisted chrome should Sticky: $status"
+[[ ! -r $segment_index ]] || fail "blacklisted focus Split the buffer"
+
+"$helper" settings set blacklist "walker,hyprlock,waybar" >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ ${segment_count:-0} == 0 ]] || fail "editing Blacklist while Live should not Split, got $segment_count"
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.blacklist == ["walker","hyprlock","waybar"]' >/dev/null   || fail "blacklist reorder was not stored: $settings"
+
+"$helper" settings set blacklist "waybar,walker,hyprlock,kitty" >/dev/null
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"kitty","monitor":"DP-1","address":"0xkit","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "firefox" and .phase == "live"' >/dev/null   || fail "added blacklist class should Sticky: $status"
+[[ ! -r $segment_index ]] || fail "sticky-on-blacklist Split"
+
+"$helper" settings set blacklist "" >/dev/null
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.filter == "denylist" and (.blacklist | length) == 0' >/dev/null   || fail "empty Blacklist was not stored: $settings"
+grep -qx 'blacklist=' "$XDG_CONFIG_HOME/omarchy-shadowplay/config" \
+  || fail "empty Blacklist should persist as an empty key, not re-seed"
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "waybar"' >/dev/null   || fail "empty Denylist should follow chrome that All still skips: $status"
+[[ ! -r $segment_index ]] || fail "same-monitor empty-denylist chrome follow Split"
+
+"$helper" settings set filter all >/dev/null
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "firefox" or .subject == "waybar"' >/dev/null   || fail "filter all tick status: $status"
+# restore firefox as subject then chrome sticky under All
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "firefox"' >/dev/null || fail "return to firefox: $status"
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "firefox" and .phase == "live"' >/dev/null   || fail "Filter=All should still skip built-in chrome: $status"
 "$helper" stop
 echo OK
