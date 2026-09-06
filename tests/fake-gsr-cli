@@ -45,8 +45,21 @@ save-replay)
   printf '%s\n' "$seq" > "$FAKE_DIR/save.seq"
   clip="$FAKE_DIR/gsr-save-${seq}.mp4"
   : > "$clip"
-  if [[ -n ${command[1]:-} ]]; then
-    printf '%s\n' "${command[1]}" > "$FAKE_DIR/saved-seconds"
+  seconds=""
+  restart="false"
+  for extra in "${command[@]:1}"; do
+    case "$extra" in
+    restart-replay=*)
+      restart="${extra#restart-replay=}"
+      ;;
+    *)
+      seconds="$extra"
+      ;;
+    esac
+  done
+  printf '%s\n' "$restart" > "$FAKE_DIR/restart-replay"
+  if [[ -n $seconds ]]; then
+    printf '%s\n' "$seconds" > "$FAKE_DIR/saved-seconds"
   else
     rm -f "$FAKE_DIR/saved-seconds"
   fi

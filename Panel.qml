@@ -14,7 +14,7 @@ Panel {
   property var anchorItem: null
   property var hostWidget: null
   property string helperPath: ""
-  property var status: ({ running: false, monitor: "", seconds: 60, audio: "desktop", lastClip: "", phase: "off", armed: false, linger: false, subject: "" })
+  property var status: ({ running: false, monitor: "", seconds: 60, audio: "desktop", lastClip: "", saving: 0, phase: "off", armed: false, linger: false, subject: "" })
   property var monitors: []
   property var windows: []
   property bool busy: false
@@ -31,11 +31,17 @@ Panel {
 
   readonly property var barIdentity: hostWidget || root
   readonly property bool running: status.running === true
+  readonly property int savingCount: Model.boundedInteger(status.saving, 0, 0, 99)
   readonly property bool armed: status.armed === true || status.phase === "armed"
   readonly property bool sessionOn: running || armed || status.phase === "linger" || status.linger === true
   readonly property string configuredMonitor: String(setting("monitor", "") || "")
   readonly property int configuredSeconds: Model.boundedInteger(setting("seconds", 60), 60, Model.minSeconds(), Model.maxSeconds())
-  readonly property string configuredAudio: Model.normalizeAudio(setting("audio", "desktop"))
+  readonly property string configuredAudio: {
+    var audio = Model.normalizeAudio(setting("audio", "desktop"))
+    if ((audio === "window" || audio === "window-mic") && root.configuredMode !== "follow" && root.configuredMode !== "pin")
+      return audio === "window-mic" ? "both" : "desktop"
+    return audio
+  }
   readonly property bool configuredAutostart: setting("autostart", false) === true || String(setting("autostart", false)) === "true"
   readonly property string configuredOutputDir: String(setting("outputDir", "") || "")
   readonly property string configuredMode: Model.normalizeMode(setting("mode", "monitor"))
@@ -46,12 +52,14 @@ Panel {
   readonly property var modeChoices: Model.modeOptions()
   readonly property var monitorChoices: Model.monitorOptions(monitors)
   readonly property var secondsChoices: Model.secondsOptions()
-  readonly property var audioChoices: Model.audioOptions()
+  readonly property var audioChoices: Model.audioOptions(root.configuredMode)
   readonly property var filterChoices: Model.filterOptions()
   readonly property var configuredMatchList: Model.stringList(setting("matchList", []))
   readonly property string configuredFilter: Model.normalizeFilter(setting("filter", "all"))
-  readonly property var captureExtentChoices: Model.captureExtentOptions()
-  readonly property string configuredCaptureExtent: Model.normalizeCaptureExtent(setting("captureExtent", root.configuredMode === "follow" ? "window" : "monitor"))
+  readonly property var clipResolutionChoices: Model.clipResolutionOptions()
+  readonly property string configuredClipResolution: Model.normalizeClipResolution(setting("clipResolution", "1080p"))
+  readonly property var clipScaleChoices: Model.clipScaleOptions()
+  readonly property string configuredClipScale: Model.normalizeClipScale(setting("clipScale", "fit"))
   readonly property string configuredCodec: Model.normalizeCodec(setting("codec", "auto"))
   readonly property int configuredFps: Model.boundedInteger(setting("fps", 60), 60, Model.minFps(), Model.maxFps())
   readonly property int configuredQuality: Model.boundedInteger(setting("quality", 40000), 40000, Model.minQuality(), Model.maxQuality())
@@ -257,12 +265,11 @@ Panel {
   }
 
   function save() {
-    if (root.helperPath === "" || actionProc.running) return
+    if (root.helperPath === "") return
     if (!root.running) return
-    root.busy = true
     root.lastError = ""
-    actionProc.command = root.runHelper(["save"])
-    actionProc.running = true
+    Quickshell.execDetached(root.runHelper(["save"]))
+    Qt.callLater(root.refresh)
   }
 
   function copyHotkeys() {
@@ -326,10 +333,28 @@ Panel {
 
   Timer {
     id: statusTimer
-    interval: 2000
+    interval: root.savingCount > 0 ? 400 : 2000
     repeat: true
     running: true
     onTriggered: root.refresh()
+  }
+
+  Timer {
+    id: followTimer
+    interval: 400
+    repeat: true
+    running: (root.configuredMode === "follow" || root.configuredMode === "pin") && root.sessionOn && root.helperPath !== ""
+    onTriggered: {
+      if (followTickProc.running) return
+      followTickProc.command = root.runHelper(["tick"])
+      followTickProc.running = true
+    }
+  }
+
+  Process {
+    id: followTickProc
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
   }
 
   Process {
@@ -404,7 +429,6 @@ Panel {
             if (parsed.region !== undefined) values.region = String(parsed.region || "")
             if (parsed.pinAddress !== undefined) values.pinAddress = String(parsed.pinAddress || "")
             if (parsed.mode) values.mode = Model.normalizeMode(parsed.mode)
-            if (parsed.captureExtent) values.captureExtent = Model.normalizeCaptureExtent(parsed.captureExtent)
             root.persistSettings(values)
           }
         }
@@ -429,7 +453,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: monitorDropdown.popupOpen || secondsDropdown.popupOpen || audioDropdown.popupOpen || modeDropdown.popupOpen || filterDropdown.popupOpen || captureExtentDropdown.popupOpen || codecDropdown.popupOpen || fpsDropdown.popupOpen || qualityDropdown.popupOpen || framerateDropdown.popupOpen || bitrateDropdown.popupOpen || blacklistAddField.activeFocus || root.blacklistFieldFocused
+      blocked: monitorDropdown.popupOpen || secondsDropdown.popupOpen || audioDropdown.popupOpen || modeDropdown.popupOpen || filterDropdown.popupOpen || clipResolutionDropdown.popupOpen || clipScaleDropdown.popupOpen || codecDropdown.popupOpen || fpsDropdown.popupOpen || qualityDropdown.popupOpen || framerateDropdown.popupOpen || bitrateDropdown.popupOpen || blacklistAddField.activeFocus || root.blacklistFieldFocused
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -726,18 +750,6 @@ Panel {
         }
 
         Dropdown {
-          id: captureExtentDropdown
-          width: parent.width
-          visible: root.configuredMode === "follow"
-          label: "Capture Extent"
-          value: root.configuredCaptureExtent
-          options: root.captureExtentChoices
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onChanged: function(value) { root.applySetting("captureExtent", Model.normalizeCaptureExtent(value)) }
-        }
-
-        Dropdown {
           id: monitorDropdown
           width: parent.width
           visible: root.configuredMode === "monitor"
@@ -823,6 +835,28 @@ Panel {
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onChanged: function(value) { root.applySetting("audio", Model.normalizeAudio(value)) }
+        }
+
+        Dropdown {
+          id: clipResolutionDropdown
+          width: parent.width
+          label: "Clip resolution"
+          value: root.configuredClipResolution
+          options: root.clipResolutionChoices
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          onChanged: function(value) { root.applySetting("clipResolution", Model.normalizeClipResolution(value)) }
+        }
+
+        Dropdown {
+          id: clipScaleDropdown
+          width: parent.width
+          label: "Clip layout"
+          value: root.configuredClipScale
+          options: root.clipScaleChoices
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          onChanged: function(value) { root.applySetting("clipScale", Model.normalizeClipScale(value)) }
         }
 
         Text {

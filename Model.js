@@ -30,6 +30,7 @@ function parseStatus(text) {
     ipc: String(status.ipc || ""),
     outputDir: String(status.outputDir || ""),
     lastClip: String(status.lastClip || ""),
+    saving: boundedInteger(status.saving, 0, 0, 99),
     phase: String(status.phase || (status.running === true ? "live" : "off")),
     armed: status.armed === true || status.phase === "armed",
     linger: status.linger === true || status.phase === "linger",
@@ -39,6 +40,8 @@ function parseStatus(text) {
     mode: normalizeMode(status.mode),
     filter: normalizeFilter(status.filter),
     captureExtent: normalizeCaptureExtent(status.captureExtent),
+    clipResolution: normalizeClipResolution(status.clipResolution),
+    clipScale: normalizeClipScale(status.clipScale),
     matchList: stringList(status.matchList),
     blacklist: stringList(status.blacklist),
     encoder: parseEncoder(encoder)
@@ -96,7 +99,7 @@ function parseMonitors(text) {
 
 function normalizeAudio(value) {
   var audio = String(value || "desktop")
-  if (audio === "none" || audio === "desktop" || audio === "both") return audio
+  if (audio === "none" || audio === "desktop" || audio === "both" || audio === "window" || audio === "window-mic") return audio
   return "desktop"
 }
 
@@ -116,6 +119,40 @@ function normalizeCaptureExtent(value) {
   var extent = String(value || "monitor")
   if (extent === "monitor" || extent === "window") return extent
   return "monitor"
+}
+
+function normalizeClipResolution(value) {
+  var res = String(value || "1080p")
+  if (res === "720p" || res === "1080p" || res === "1440p" || res === "2160p") return res
+  if (res === "1280x720") return "720p"
+  if (res === "1920x1080") return "1080p"
+  if (res === "2560x1440") return "1440p"
+  if (res === "3840x2160" || res === "4k" || res === "4K") return "2160p"
+  return "1080p"
+}
+
+function clipResolutionOptions() {
+  return [
+    { value: "720p", label: "720p · 1280×720" },
+    { value: "1080p", label: "1080p · 1920×1080" },
+    { value: "1440p", label: "1440p · 2560×1440" },
+    { value: "2160p", label: "2160p · 3840×2160" }
+  ]
+}
+
+function normalizeClipScale(value) {
+  var scale = String(value || "fit")
+  if (scale === "stretch" || scale === "distort" || scale === "fill" || scale === "cover" || scale === "crop") return "stretch"
+  if (scale === "center" || scale === "native") return "center"
+  return "fit"
+}
+
+function clipScaleOptions() {
+  return [
+    { value: "fit", label: "Scale to fit · bars" },
+    { value: "stretch", label: "Stretch to fill · distort" },
+    { value: "center", label: "Center native · 1:1" }
+  ]
 }
 
 function normalizeCodec(value) {
@@ -234,12 +271,17 @@ function formatReplayLength(seconds) {
   return n + " seconds"
 }
 
-function audioOptions() {
-  return [
+function audioOptions(mode) {
+  var options = [
     { value: "none", label: "No audio" },
     { value: "desktop", label: "Desktop audio" },
     { value: "both", label: "Desktop + microphone" }
   ]
+  if (mode === "follow" || mode === "pin") {
+    options.push({ value: "window", label: "Window audio" })
+    options.push({ value: "window-mic", label: "Window + microphone" })
+  }
+  return options
 }
 
 function codecOptions() {
@@ -290,16 +332,31 @@ function bitrateModeOptions() {
   ]
 }
 
+function savingLabel(count) {
+  var n = boundedInteger(count, 0, 0, 99)
+  if (n <= 0) return ""
+  if (n === 1) return "Saving"
+  return "Saving " + n
+}
+
 function statusLabel(status) {
   if (!status) return "Buffer off"
-  if (status.phase === "armed" || status.armed === true) return "Armed"
+  var saving = savingLabel(status.saving)
+  if (status.phase === "armed" || status.armed === true) {
+    return saving ? saving + " · Armed" : "Armed"
+  }
   if (status.phase === "linger" || status.linger === true) {
     var lingerMon = status.monitor || "monitor"
-    return "Linger · " + lingerMon
+    var linger = "Linger · " + lingerMon
+    return saving ? saving + " · " + linger : linger
   }
-  if (status.running !== true) return "Buffer off"
+  if (status.running !== true) {
+    if (saving) return saving
+    return "Buffer off"
+  }
   var monitor = status.monitor || "monitor"
-  return monitor + " · last " + formatReplayLength(status.seconds)
+  var live = monitor + " · last " + formatReplayLength(status.seconds)
+  return saving ? saving + " · " + live : live
 }
 
 function modeOptions() {
@@ -316,13 +373,6 @@ function filterOptions() {
     { value: "all", label: "All" },
     { value: "allowlist", label: "Allowlist" },
     { value: "denylist", label: "Denylist" }
-  ]
-}
-
-function captureExtentOptions() {
-  return [
-    { value: "window", label: "Window" },
-    { value: "monitor", label: "Monitor" }
   ]
 }
 

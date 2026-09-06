@@ -16,6 +16,7 @@ ACTIVITY_FILE="$STATE_DIR/activity"
 LOG_FILE="$STATE_DIR/gsr.log"
 SEGMENT_DIR="$STATE_DIR/segments"
 SEGMENT_INDEX="$SEGMENT_DIR/index"
+SAVE_JOBS_DIR="$STATE_DIR/save-jobs"
 
 GSR_BIN="${SHADOWPLAY_GSR_BIN:-gpu-screen-recorder}"
 GSR_CLI_BIN="${SHADOWPLAY_GSR_CLI_BIN:-gsr-cli}"
@@ -36,6 +37,8 @@ DEFAULT_QUALITY=40000
 DEFAULT_CURSOR="true"
 DEFAULT_FRAMERATE_MODE="cfr"
 DEFAULT_BITRATE_MODE="cbr"
+DEFAULT_CLIP_RESOLUTION="1080p"
+DEFAULT_CLIP_SCALE="fit"
 MIN_SECONDS=15
 MAX_SECONDS=7200
 MIN_FPS=1
@@ -53,6 +56,8 @@ CONFIG_QUALITY="$DEFAULT_QUALITY"
 CONFIG_CURSOR="$DEFAULT_CURSOR"
 CONFIG_FRAMERATE_MODE="$DEFAULT_FRAMERATE_MODE"
 CONFIG_BITRATE_MODE="$DEFAULT_BITRATE_MODE"
+CONFIG_CLIP_RESOLUTION="$DEFAULT_CLIP_RESOLUTION"
+CONFIG_CLIP_SCALE="$DEFAULT_CLIP_SCALE"
 CONFIG_MATCH_LIST=""
 CONFIG_BLACKLIST="$DEFAULT_BLACKLIST"
 CONFIG_OUTPUT_DIR=""
@@ -85,8 +90,8 @@ RUNTIME_BASE="$(runtime_base)"
 RUNTIME_DIR="$RUNTIME_BASE/omarchy-shadowplay"
 IPC="$RUNTIME_DIR/gsr.sock"
 GSR_OUTPUT_DIR="$RUNTIME_DIR/gsr-output"
-(umask 077; mkdir -p "$RUNTIME_DIR" "$STATE_DIR" "$CONFIG_DIR" "$SEGMENT_DIR" "$GSR_OUTPUT_DIR")
-chmod 700 "$RUNTIME_DIR" "$STATE_DIR" "$CONFIG_DIR" "$SEGMENT_DIR" "$GSR_OUTPUT_DIR"
+(umask 077; mkdir -p "$RUNTIME_DIR" "$STATE_DIR" "$CONFIG_DIR" "$SEGMENT_DIR" "$SAVE_JOBS_DIR" "$GSR_OUTPUT_DIR")
+chmod 700 "$RUNTIME_DIR" "$STATE_DIR" "$CONFIG_DIR" "$SEGMENT_DIR" "$SAVE_JOBS_DIR" "$GSR_OUTPUT_DIR"
 
 usage() {
   cat <<USAGE
@@ -100,7 +105,7 @@ Usage:
   $PROGRAM settings show [--json]
   $PROGRAM settings set monitor <name|>
   $PROGRAM settings set seconds <15-600>
-  $PROGRAM settings set audio <none|desktop|both>
+  $PROGRAM settings set audio <none|desktop|both|window|window-mic>
   $PROGRAM settings set mode <monitor|follow|pin|region>
   $PROGRAM settings set filter <all|allowlist|denylist>
   $PROGRAM settings set matchList <class,regex,...>
@@ -112,6 +117,8 @@ Usage:
   $PROGRAM settings set cursor <true|false>
   $PROGRAM settings set framerateMode <cfr|vfr>
   $PROGRAM settings set bitrateMode <cbr|vbr>
+  $PROGRAM settings set clipResolution <720p|1080p|1440p|2160p>
+  $PROGRAM settings set clipScale <fit|stretch|center>
   $PROGRAM settings set region <WxH+X+Y>
   $PROGRAM settings set pinAddress <hyprland-address>
   $PROGRAM pick-region
@@ -126,7 +133,9 @@ the last N seconds without stopping the buffer.
 
 An empty monitor setting captures whichever monitor is focused when start runs.
 Changing the Buffer Target while Live flushes a Segment and restarts capture.
-Save joins overlapping Segments with the live buffer into one Clip.
+A Follow Subject change on the same monitor dumps the ring as a Segment and
+clears it without stopping capture. Save joins overlapping Segments with the
+live buffer into one Clip.
 
 This process is launched as $PROCESS_NAME so Omarchy's stock screen recorder
 does not treat it as a session recording. Only one KMS capture can run at a
@@ -215,6 +224,57 @@ print_encoder_json() {
   printf '}'
 }
 
+normalize_clip_resolution() {
+  case "${1:-}" in
+  720p|1280x720) printf '720p' ;;
+  1440p|2560x1440) printf '1440p' ;;
+  2160p|4k|4K|3840x2160) printf '2160p' ;;
+  1080p|1920x1080|"") printf '1080p' ;;
+  *) printf '1080p' ;;
+  esac
+}
+
+clip_resolution_size() {
+  case "$(normalize_clip_resolution "${1:-$CONFIG_CLIP_RESOLUTION}")" in
+  720p) printf '1280x720' ;;
+  1440p) printf '2560x1440' ;;
+  2160p) printf '3840x2160' ;;
+  *) printf '1920x1080' ;;
+  esac
+}
+
+normalize_clip_scale() {
+  case "${1:-}" in
+  stretch|distort|fill|cover|crop) printf 'stretch' ;;
+  center|native) printf 'center' ;;
+  fit|contain|"") printf 'fit' ;;
+  *) printf 'fit' ;;
+  esac
+}
+
+clip_layout_filter() {
+  local cropf="${1:-}"
+  local canvas="${2:-$(clip_resolution_size)}"
+  local scale="${3:-$CONFIG_CLIP_SCALE}"
+  local w=${canvas%%x*} h=${canvas#*x}
+  local layout
+  layout=$(normalize_clip_scale "$scale")
+  case "$layout" in
+  stretch)
+    printf '%sscale=%s:%s,setsar=1,fps=60,format=yuv420p,setpts=PTS-STARTPTS' \
+      "$cropf" "$w" "$h"
+    ;;
+  center)
+    printf '%scrop=min(iw\\,%s):min(ih\\,%s):(iw-ow)/2:(ih-oh)/2,pad=%s:%s:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=60,format=yuv420p,setpts=PTS-STARTPTS' \
+      "$cropf" "$w" "$h" "$w" "$h"
+    ;;
+  *)
+    printf '%sscale=%s:%s:force_original_aspect_ratio=decrease,pad=%s:%s:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=60,format=yuv420p,setpts=PTS-STARTPTS' \
+      "$cropf" "$w" "$h" "$w" "$h"
+    ;;
+  esac
+}
+
 print_settings_fields() {
   local extent="$CONFIG_CAPTURE_EXTENT"
   if [[ $CONFIG_MODE == pin ]]; then
@@ -223,6 +283,8 @@ print_settings_fields() {
   printf '"mode":%s,' "$(json_string "$CONFIG_MODE")"
   printf '"filter":%s,' "$(json_string "$CONFIG_FILTER")"
   printf '"captureExtent":%s,' "$(json_string "$extent")"
+  printf '"clipResolution":%s,' "$(json_string "$CONFIG_CLIP_RESOLUTION")"
+  printf '"clipScale":%s,' "$(json_string "$CONFIG_CLIP_SCALE")"
   printf '"matchList":%s,' "$(json_string_array "$CONFIG_MATCH_LIST")"
   printf '"blacklist":%s,' "$(json_string_array "$CONFIG_BLACKLIST")"
   printf '"pinAddress":%s,' "$(json_string "$CONFIG_PIN_ADDRESS")"
@@ -243,6 +305,8 @@ reset_config_defaults() {
   CONFIG_CURSOR="$DEFAULT_CURSOR"
   CONFIG_FRAMERATE_MODE="$DEFAULT_FRAMERATE_MODE"
   CONFIG_BITRATE_MODE="$DEFAULT_BITRATE_MODE"
+  CONFIG_CLIP_RESOLUTION="$DEFAULT_CLIP_RESOLUTION"
+  CONFIG_CLIP_SCALE="$DEFAULT_CLIP_SCALE"
   CONFIG_MATCH_LIST=""
   CONFIG_BLACKLIST="$DEFAULT_BLACKLIST"
   CONFIG_OUTPUT_DIR=""
@@ -289,7 +353,7 @@ load_config() {
       [[ $value =~ ^[0-9]+$ ]] && CONFIG_SECONDS="$value"
       ;;
     audio)
-      [[ $value == none || $value == desktop || $value == both ]] && CONFIG_AUDIO="$value"
+      [[ $value == none || $value == desktop || $value == both || $value == window || $value == window-mic ]] && CONFIG_AUDIO="$value"
       ;;
     mode)
       [[ $value == monitor || $value == follow || $value == pin || $value == region ]] && CONFIG_MODE="$value"
@@ -321,6 +385,12 @@ load_config() {
     bitrateMode)
       [[ $value == cbr || $value == vbr ]] && CONFIG_BITRATE_MODE="$value"
       ;;
+    clipResolution)
+      CONFIG_CLIP_RESOLUTION="$(normalize_clip_resolution "$value")"
+      ;;
+    clipScale)
+      CONFIG_CLIP_SCALE="$(normalize_clip_scale "$value")"
+      ;;
     matchList)
       CONFIG_MATCH_LIST="$(csv_to_lines "$value")"
       ;;
@@ -343,7 +413,7 @@ load_config() {
   if [[ ${BLACKLIST_PRESENT:-false} != true ]]; then
     CONFIG_BLACKLIST="$DEFAULT_BLACKLIST"
   fi
-  if [[ $CONFIG_MODE == follow && $have_capture_extent != true ]]; then
+  if [[ $CONFIG_MODE == follow || $CONFIG_MODE == pin ]]; then
     CONFIG_CAPTURE_EXTENT=window
   fi
   clamp_seconds
@@ -396,6 +466,8 @@ write_config() {
       printf 'cursor=%s\n' "$CONFIG_CURSOR"
       printf 'framerateMode=%s\n' "$CONFIG_FRAMERATE_MODE"
       printf 'bitrateMode=%s\n' "$CONFIG_BITRATE_MODE"
+      printf 'clipResolution=%s\n' "$CONFIG_CLIP_RESOLUTION"
+      printf 'clipScale=%s\n' "$CONFIG_CLIP_SCALE"
       printf 'matchList=%s\n' "$match_csv"
       printf 'blacklist=%s\n' "$blacklist_csv"
       printf 'outputDir=%s\n' "$CONFIG_OUTPUT_DIR"
@@ -746,6 +818,11 @@ write_activity() {
       printf 'monitor=%s\n' "$monitor"
       printf 'seconds=%s\n' "$seconds"
       printf 'audio=%s\n' "$audio"
+      if [[ ${AUDIO_APP_SET:-} == 1 ]]; then
+        printf 'audio_app=%s\n' "$AUDIO_APP"
+      else
+        printf 'audio_app=%s\n' "$(activity_value audio_app)"
+      fi
       printf 'last_clip=%s\n' "$last_clip"
       printf 'started=%s\n' "$started"
       printf 'codec=%s\n' "$CONFIG_CODEC"
@@ -814,7 +891,7 @@ apply_start_flags() {
       ;;
     --audio=*)
       local value="${arg#--audio=}"
-      [[ $value == none || $value == desktop || $value == both ]] || die "audio must be none, desktop, or both"
+      [[ $value == none || $value == desktop || $value == both || $value == window || $value == window-mic ]] || die "audio must be none, desktop, both, window, or window-mic"
       CONFIG_AUDIO="$value"
       ;;
     --region=*)
@@ -843,14 +920,21 @@ log_looks_busy() {
 
 save_replay_path() {
   local seconds="${1:-}"
+  local restart="${2:-}"
   local path=""
+  local -a args=(-ipc "$IPC" save-replay)
+  mkdir -p "$STATE_DIR"
+  exec 8>"$STATE_DIR/replay.lock"
+  flock 8
   if [[ -n $seconds ]]; then
-    path=$("$GSR_CLI_BIN" -ipc "$IPC" save-replay "$seconds")
-  else
-    path=$("$GSR_CLI_BIN" -ipc "$IPC" save-replay)
+    args+=("$seconds")
   fi
+  if [[ $restart == restart ]]; then
+    args+=(restart-replay=true)
+  fi
+  path=$("$GSR_CLI_BIN" "${args[@]}") || return 1
   path=${path//$'\n'/}
-  [[ -n $path ]] || die "save-replay did not return a file path"
+  [[ -n $path ]] || return 1
   printf '%s\n' "$path"
 }
 
@@ -865,6 +949,91 @@ write_segment_index() {
 discard_all_segments() {
   rm -f "$SEGMENT_INDEX"
   find "$SEGMENT_DIR" -mindepth 1 -maxdepth 1 ! -name index -delete 2>/dev/null || true
+}
+
+consume_segment_job() {
+  local index="$1"
+  local end path
+  [[ -n $index && -r $index ]] || return 0
+  while IFS='|' read -r end path _ || [[ -n ${end:-} ]]; do
+    [[ -n ${path:-} ]] || continue
+    rm -f "$path"
+  done < "$index"
+  rm -f "$index"
+}
+
+clip_path_claimed() {
+  local path="$1" dest
+  [[ -e $path || -e $path.pending ]] && return 0
+  (
+    shopt -s nullglob
+    for dest in "$SAVE_JOBS_DIR"/*/dest; do
+      [[ -r $dest ]] || continue
+      [[ $(<"$dest") == "$path" ]] && exit 0
+    done
+    exit 1
+  )
+}
+
+unique_clip_path() {
+  local dir="$1" stamp="$2"
+  local path n
+  path="$dir/Replay-${stamp}.mp4"
+  n=2
+  while clip_path_claimed "$path"; do
+    path="$dir/Replay-${stamp}-$n.mp4"
+    n=$((n + 1))
+  done
+  printf '%s\n' "$path"
+}
+
+job_pid_alive() {
+  local pid="${1:-}"
+  [[ $pid =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+reap_save_jobs() {
+  local job pid dest
+  (
+    shopt -s nullglob
+    for job in "$SAVE_JOBS_DIR"/*/; do
+      printf '%s\n' "$job"
+    done
+  ) | while IFS= read -r job; do
+    [[ -d $job ]] || continue
+    pid=""
+    [[ -r $job/pid ]] && pid=$(<"$job/pid")
+    if [[ -z $pid ]] || job_pid_alive "$pid"; then
+      continue
+    fi
+    dest=""
+    [[ -r $job/dest ]] && dest=$(<"$job/dest")
+    if [[ -n $dest && -e $dest ]]; then
+      write_activity "$(activity_value running)" "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$dest"
+    else
+      notify "Replay save failed" "A Clip did not finish writing."
+    fi
+    rm -rf "$job"
+  done
+}
+
+saving_count() {
+  local job pid count=0
+  while IFS= read -r job; do
+    [[ -d $job ]] || continue
+    pid=""
+    [[ -r $job/pid ]] && pid=$(<"$job/pid")
+    if [[ -z $pid ]] || job_pid_alive "$pid"; then
+      count=$((count + 1))
+    fi
+  done < <(
+    shopt -s nullglob
+    for job in "$SAVE_JOBS_DIR"/*/; do
+      printf '%s\n' "$job"
+    done
+  )
+  printf '%s\n' "$count"
 }
 
 discard_old_segments() {
@@ -890,10 +1059,11 @@ discard_old_segments() {
 }
 
 flush_segment() {
+  local restart="${1:-}"
   buffer_running || return 0
   local src dest end started seconds lived duration audio
-  src=$(save_replay_path)
-  [[ -e $src ]] || die "save-replay did not create a segment file"
+  src=$(save_replay_path "" "$restart") || return 0
+  [[ -e $src ]] || return 0
   mkdir -p "$SEGMENT_DIR"
   chmod 700 "$SEGMENT_DIR"
   end=$(now_epoch)
@@ -938,6 +1108,11 @@ live_capture_differs() {
   [[ $(activity_value monitor) != "$monitor" ]] && return 0
   [[ $(activity_value seconds) != "$CONFIG_SECONDS" ]] && return 0
   [[ $(activity_value audio) != "$CONFIG_AUDIO" ]] && return 0
+  if [[ $CONFIG_AUDIO == window || $CONFIG_AUDIO == window-mic ]]; then
+    local want_app
+    want_app="${AUDIO_APP:-$(subject_audio_app)}"
+    [[ $(activity_value audio_app) != "$want_app" ]] && return 0
+  fi
   [[ $(activity_value codec) != "$CONFIG_CODEC" ]] && return 0
   [[ $(activity_value fps) != "$CONFIG_FPS" ]] && return 0
   [[ $(activity_value quality) != "$CONFIG_QUALITY" ]] && return 0
@@ -1016,9 +1191,29 @@ launch_recorder() {
   if [[ $CONFIG_CURSOR == false ]]; then
     gsr_args+=(-cursor no)
   fi
+  AUDIO_APP=""
+  AUDIO_APP_SET=1
+  if [[ $audio == window || $audio == window-mic ]]; then
+    if [[ $CONFIG_MODE != follow && $CONFIG_MODE != pin ]]; then
+      audio=$([[ $audio == window-mic ]] && echo both || echo desktop)
+    else
+      AUDIO_APP=$(subject_audio_app)
+      [[ -n $AUDIO_APP ]] || AUDIO_APP="${CAPTURE_SUBJECT_CLASS:-$(activity_value subject_class)}"
+      AUDIO_APP=${AUDIO_APP%%$'\n'*}
+      AUDIO_APP=${AUDIO_APP//|/}
+    fi
+  fi
   case "$audio" in
   desktop) gsr_args+=(-a default_output -ac aac) ;;
   both) gsr_args+=(-a "default_output|default_input" -ac aac) ;;
+  window)
+    [[ -n $AUDIO_APP ]] || die "couldn't find audio for this window"
+    gsr_args+=(-a "app:${AUDIO_APP}" -ac aac)
+    ;;
+  window-mic)
+    [[ -n $AUDIO_APP ]] || die "couldn't find audio for this window"
+    gsr_args+=(-a "app:${AUDIO_APP}|default_input" -ac aac)
+    ;;
   none) ;;
   *) die "invalid audio setting: $audio" ;;
   esac
@@ -1048,11 +1243,6 @@ launch_recorder() {
   fi
 
   write_activity true "$monitor" "$seconds" "$audio" "$(activity_value last_clip)" "$(now_epoch)"
-  if [[ $CONFIG_MODE == region ]]; then
-    notify "Replay buffer running" "region $region · last ${seconds}s"
-  else
-    notify "Replay buffer running" "$monitor · last ${seconds}s"
-  fi
 }
 
 split_and_restart() {
@@ -1084,11 +1274,16 @@ join_clip() {
   local live="$1"
   local out="$2"
   local window="${3:-$CONFIG_SECONDS}"
-  local now cutoff end path duration audio crop trim kept i canvas canvas_w canvas_h fc maps cropf needs_ffmpeg
+  local index="${4:-$SEGMENT_INDEX}"
+  local live_crop="${5:-}"
+  local live_audio="${6:-$CONFIG_AUDIO}"
+  local canvas="${7:-$(clip_resolution_size)}"
+  local scale="${8:-$CONFIG_CLIP_SCALE}"
+  local now cutoff end path duration audio crop trim kept i fc maps cropf vf
   local -a paths=() trims=() durs=() auds=() crops=()
   now=$(now_epoch)
   cutoff=$((now - window))
-  if [[ -r $SEGMENT_INDEX ]]; then
+  if [[ -n $index && -r $index ]]; then
     while IFS='|' read -r end path duration audio crop || [[ -n ${end:-} ]]; do
       [[ -n ${path:-} && -e $path ]] || continue
       [[ $duration =~ ^[0-9]+$ ]] || duration=$window
@@ -1108,26 +1303,15 @@ join_clip() {
       durs+=("$kept")
       auds+=("$audio")
       crops+=("$crop")
-    done < "$SEGMENT_INDEX"
+    done < "$index"
   fi
   paths+=("$live")
   trims+=(0)
   durs+=("$window")
-  auds+=("$CONFIG_AUDIO")
-  crops+=("$(live_crop_spec)")
-  needs_ffmpeg=0
-  (( ${#paths[@]} > 1 )) && needs_ffmpeg=1
-  for crop in "${crops[@]}"; do
-    if [[ $crop != full && -n $crop ]]; then
-      needs_ffmpeg=1
-      break
-    fi
-  done
-  if (( needs_ffmpeg == 0 )); then
-    mv -f "$live" "$out" || { cp -f "$live" "$out" && rm -f "$live"; }
-    printf '%s\n' "$out"
-    return
-  fi
+  [[ -n $live_audio ]] || live_audio=$CONFIG_AUDIO
+  [[ -n $live_crop ]] || live_crop=$(live_crop_spec)
+  auds+=("$live_audio")
+  crops+=("$live_crop")
   command -v "$FFMPEG_BIN" >/dev/null 2>&1 || die "ffmpeg is not installed"
   local keep_audio=0
   for audio in "${auds[@]}"; do
@@ -1138,15 +1322,12 @@ join_clip() {
   done
   if (( ${#paths[@]} == 1 )); then
     cropf=$(segment_crop_filter "${crops[0]}")
-    cropf=${cropf%,}
+    vf=$(clip_layout_filter "$cropf" "$canvas" "$scale")
     local -a ff_single=(-hide_banner -loglevel error -y)
     if (( ${trims[0]} > 0 )); then
       ff_single+=(-ss "${trims[0]}")
     fi
-    ff_single+=(-i "${paths[0]}")
-    if [[ -n $cropf ]]; then
-      ff_single+=(-vf "$cropf")
-    fi
+    ff_single+=(-i "${paths[0]}" -vf "$vf")
     if (( keep_audio )); then
       ff_single+=(-c:v libx264 -preset veryfast -crf 18 -c:a aac -b:a 192k "$out")
     else
@@ -1157,14 +1338,12 @@ join_clip() {
     printf '%s\n' "$out"
     return
   fi
-  canvas=$(join_canvas)
-  canvas_w=${canvas%%x*}
-  canvas_h=${canvas#*x}
   fc=""
   maps=""
   for i in "${!paths[@]}"; do
     cropf=$(segment_crop_filter "${crops[$i]}")
-    fc+="[$i:v]${cropf}scale=${canvas_w}:${canvas_h}:force_original_aspect_ratio=decrease,pad=${canvas_w}:${canvas_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=60,format=yuv420p[v$i];"
+    vf=$(clip_layout_filter "$cropf" "$canvas" "$scale")
+    fc+="[$i:v]${vf}[v$i];"
     maps+="[v$i]"
     if (( keep_audio )); then
       if [[ ${auds[$i]} != none ]]; then
@@ -1366,34 +1545,40 @@ for item in clients:
     at = item.get("at") or item.get("at_")
     size = item.get("size")
     atx = aty = ww = hh = ""
+    def px(value):
+        try:
+            return str(int(float(value)))
+        except (TypeError, ValueError):
+            return ""
     if isinstance(at, (list, tuple)) and len(at) >= 2:
-        atx, aty = str(at[0]), str(at[1])
+        atx, aty = px(at[0]), px(at[1])
     elif isinstance(at, str) and "," in at:
-        atx, aty = at.split(",", 1)
+        atx, aty = px(at.split(",", 1)[0]), px(at.split(",", 1)[1])
     if isinstance(size, (list, tuple)) and len(size) >= 2:
-        ww, hh = str(size[0]), str(size[1])
+        ww, hh = px(size[0]), px(size[1])
     elif isinstance(size, str) and "x" in size:
-        ww, hh = size.split("x", 1)
+        ww, hh = px(size.split("x", 1)[0]), px(size.split("x", 1)[1])
     if item.get("x") is not None:
-        atx = str(item.get("x"))
+        atx = px(item.get("x"))
     if item.get("y") is not None:
-        aty = str(item.get("y"))
+        aty = px(item.get("y"))
     if item.get("w") is not None:
-        ww = str(item.get("w"))
+        ww = px(item.get("w"))
     if item.get("width") is not None:
-        ww = str(item.get("width"))
+        ww = px(item.get("width"))
     if item.get("h") is not None:
-        hh = str(item.get("h"))
+        hh = px(item.get("h"))
     if item.get("height") is not None:
-        hh = str(item.get("height"))
-    rows.append((klass, initial, monitor, address, focused, hist if isinstance(hist, int) else 10**9, title, atx, aty, ww, hh))
+        hh = px(item.get("height"))
+    pid = str(item.get("pid") or "")
+    rows.append((klass, initial, monitor, address, focused, hist if isinstance(hist, int) else 10**9, title, atx, aty, ww, hh, pid))
 if not any(r[4] for r in rows):
     with_hist = [r for r in rows if r[5] != 10**9]
     if with_hist:
         winner = min(with_hist, key=lambda r: r[5])
         rows = [r[:4] + (r is winner,) + r[5:] for r in rows]
-for klass, initial, monitor, address, focused, _hist, title, atx, aty, ww, hh in rows:
-    print("|".join([klass.replace("|"," "), initial.replace("|"," "), monitor.replace("|"," "), address.replace("|"," "), "1" if focused else "0", title.replace("|"," "), atx.replace("|"," "), aty.replace("|"," "), ww.replace("|"," "), hh.replace("|"," ")]))
+for klass, initial, monitor, address, focused, _hist, title, atx, aty, ww, hh, pid in rows:
+    print("|".join([klass.replace("|"," "), initial.replace("|"," "), monitor.replace("|"," "), address.replace("|"," "), "1" if focused else "0", title.replace("|"," "), atx.replace("|"," "), aty.replace("|"," "), ww.replace("|"," "), hh.replace("|"," "), pid.replace("|"," ")]))
 '
 }
 
@@ -1455,6 +1640,92 @@ find_class_on_monitor() {
   return 1
 }
 
+window_pid() {
+  local address="$1" class="$2"
+  local line klass initial mon addr focused title atx aty ww hh pid
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    IFS='|' read -r klass initial mon addr focused title atx aty ww hh pid <<<"$line"
+    if [[ -n $address && $addr == "$address" ]]; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+    if [[ -z $address && $klass == "$class" ]]; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+  done < <(parse_windows)
+  return 1
+}
+
+application_audio_name() {
+  local pid="${1:-}" class="${2:-}"
+  SHADOWPLAY_LOOKUP_PID="$pid" SHADOWPLAY_LOOKUP_CLASS="$class" python3 -c '
+import json, os, subprocess, sys
+pid = str(os.environ.get("SHADOWPLAY_LOOKUP_PID") or "")
+klass = str(os.environ.get("SHADOWPLAY_LOOKUP_CLASS") or "")
+override = os.environ.get("SHADOWPLAY_APP_AUDIO")
+if override:
+    print(override)
+    raise SystemExit
+raw = os.environ.get("SHADOWPLAY_APP_AUDIO_JSON") or ""
+if raw:
+    try:
+        mapping = json.loads(raw)
+    except Exception:
+        mapping = {}
+    if not isinstance(mapping, dict):
+        mapping = {}
+    if pid and mapping.get("pid:" + pid):
+        print(mapping["pid:" + pid])
+        raise SystemExit
+    key = klass.lower()
+    print(mapping.get("class:" + key) or mapping.get(klass) or mapping.get(key) or "")
+    raise SystemExit
+try:
+    data = json.loads(subprocess.check_output(["pactl", "--format=json", "list", "sink-inputs"], text=True, stderr=subprocess.DEVNULL))
+except Exception:
+    data = []
+if not isinstance(data, list):
+    data = []
+want_pid = pid
+want_class = klass.lower()
+for item in data:
+    if not isinstance(item, dict):
+        continue
+    props = item.get("properties") or item.get("proplist") or {}
+    if not isinstance(props, dict):
+        continue
+    name = str(props.get("application.name") or "").strip()
+    proc_id = str(props.get("application.process.id") or "").strip()
+    binary = str(props.get("application.process.binary") or "").strip().lower()
+    if not name:
+        continue
+    if want_pid and proc_id == want_pid:
+        print(name)
+        raise SystemExit
+    if want_class and (binary == want_class or binary.endswith("." + want_class) or want_class in binary):
+        print(name)
+        raise SystemExit
+print("")
+'
+}
+
+subject_audio_app() {
+  local class address pid name
+  case "$CONFIG_AUDIO" in
+  window|window-mic) ;;
+  *) printf ''; return 0 ;;
+  esac
+  class="${CAPTURE_SUBJECT_CLASS:-$(activity_value subject_class)}"
+  address="${CAPTURE_SUBJECT_ADDRESS:-$(activity_value subject_address)}"
+  pid=$(window_pid "$address" "$class" || true)
+  name=$(application_audio_name "$pid" "$class" || true)
+  name=${name%%$'\n'*}
+  [[ -n $name ]] || name="$class"
+  printf '%s' "$name"
+}
+
 follow_session_active() {
   local phase
   phase=$(activity_value phase)
@@ -1472,16 +1743,31 @@ go_armed() {
 go_live_on() {
   local monitor="$1" class="$2" address="$3"
   local saved="$CONFIG_MONITOR"
+  local started old_class old_addr
+  old_class=$(activity_value subject_class)
+  old_addr=$(activity_value subject_address)
+  CAPTURE_SUBJECT_CLASS="$class"
+  CAPTURE_SUBJECT_ADDRESS="$address"
+  AUDIO_APP=$(subject_audio_app)
+  AUDIO_APP_SET=1
   CONFIG_MONITOR="$monitor"
+  started=$(activity_value started)
   if buffer_running; then
     if live_capture_differs "$monitor"; then
       split_and_restart
+      started=$(activity_value started)
+    elif [[ $old_class != "$class" || $old_addr != "$address" ]]; then
+      # Same KMS target, new Subject: dump the ring with the old crop and clear it.
+      # GSR cannot move a capture rectangle over IPC.
+      flush_segment restart
+      started=$(now_epoch)
     fi
   else
     launch_recorder
+    started=$(activity_value started)
   fi
   CONFIG_MONITOR="$saved"
-  write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$address" "-" "$(window_crop_spec "$address" "$class" "$monitor")"
+  write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$started" live "$class" "$address" "-" "$(window_crop_spec "$address" "$class" "$monitor")"
 }
 
 window_crop_spec() {
@@ -1494,7 +1780,7 @@ window_crop_spec() {
   line=""
   while IFS= read -r line; do
     [[ -n $line ]] || continue
-    IFS='|' read -r klass _ mon addr _ _ atx aty ww hh <<<"$line"
+    IFS='|' read -r klass _ mon addr _ _ atx aty ww hh _ <<<"$line"
     if [[ -n $address && $addr == "$address" ]]; then
       break
     fi
@@ -1533,13 +1819,23 @@ window_crop_spec() {
       return
     fi
   fi
+  # yuv420 crop needs even origin and size.
+  if (( relx % 2 != 0 )); then relx=$((relx + 1)); fi
+  if (( rely % 2 != 0 )); then rely=$((rely + 1)); fi
+  if (( ww % 2 != 0 )); then ww=$((ww - 1)); fi
+  if (( hh % 2 != 0 )); then hh=$((hh - 1)); fi
+  if (( ww <= 0 || hh <= 0 )); then
+    printf 'full\n'
+    return
+  fi
   printf '%sx%s+%s+%s\n' "$ww" "$hh" "$relx" "$rely"
 }
 
 enter_linger() {
   local until
   until=$(( $(now_epoch) + CONFIG_SECONDS ))
-  write_activity true "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" linger "$(activity_value subject_class)" "$(activity_value subject_address)" "$until" full
+  flush_segment restart
+  write_activity true "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(now_epoch)" linger "$(activity_value subject_class)" "$(activity_value subject_address)" "$until" full
 }
 
 cmd_follow_tick() {
@@ -1578,12 +1874,6 @@ cmd_follow_tick() {
     if [[ $phase == linger && $tgt_class == "$subject_class" && $tgt_mon == "$monitor" ]]; then
       write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$tgt_class" "$tgt_addr" "-" "$(window_crop_spec "$tgt_addr" "$tgt_class" "$tgt_mon")"
       return 0
-    fi
-    if [[ $phase == live || $phase == linger ]]; then
-      if [[ $tgt_mon == "$monitor" ]]; then
-        write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$tgt_class" "$tgt_addr" "-" "$(window_crop_spec "$tgt_addr" "$tgt_class" "$tgt_mon")"
-        return 0
-      fi
     fi
     go_live_on "$tgt_mon" "$tgt_class" "$tgt_addr"
   }
@@ -1662,12 +1952,12 @@ cmd_pin_tick() {
   if [[ -n $line ]]; then
     IFS='|' read -r class _ win_mon win_addr _ <<<"$line"
     if [[ $phase == linger && $win_mon == "$monitor" ]]; then
-      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$win_addr" "-"
+      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$win_addr" "-" "$(window_crop_spec "$win_addr" "$class" "$win_mon")"
       return 0
     fi
     if [[ $phase == live || $phase == linger ]]; then
       if [[ $win_mon == "$monitor" ]]; then
-        write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$win_addr" "-"
+        write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$win_addr" "-" "$(window_crop_spec "$win_addr" "$class" "$win_mon")"
         return 0
       fi
       go_live_on "$win_mon" "$class" "$win_addr"
@@ -1747,18 +2037,68 @@ cmd_save() {
     [[ $seconds =~ ^[0-9]+$ ]] || die "seconds must be a positive integer"
     (( seconds > 0 )) || die "seconds must be a positive integer"
   fi
-  discard_old_segments "${seconds:-$CONFIG_SECONDS}"
-  local live path dir stamp window
+  local live dest dir stamp window job_index="" job_dir crop audio canvas
   window="${seconds:-$CONFIG_SECONDS}"
-  live=$(save_replay_path "$seconds")
+  mkdir -p "$STATE_DIR" "$SAVE_JOBS_DIR"
+  exec 9>"$STATE_DIR/save.lock"
+  flock 9
+  discard_old_segments "$window"
+  live=$(save_replay_path "$seconds" restart) || die "save-replay did not return a file path"
+  [[ -e $live ]] || die "save-replay did not create a file"
+  if [[ -r $SEGMENT_INDEX ]]; then
+    job_index="$SEGMENT_DIR/.save-index.$$"
+    mv -f "$SEGMENT_INDEX" "$job_index"
+  fi
+  write_activity true "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$(activity_value last_clip)" "$(now_epoch)"
   dir=$(output_dir)
   mkdir -p "$dir"
   stamp=$(now_epoch)
-  path=$(join_clip "$live" "$dir/Replay-${stamp}.mp4" "$window")
+  dest=$(unique_clip_path "$dir" "$stamp")
+  job_dir="$SAVE_JOBS_DIR/${stamp}.$$.$RANDOM"
+  mkdir -p "$job_dir"
+  printf '%s\n' "$dest" > "$job_dir/dest"
+  printf '%s\n' "$live" > "$job_dir/live"
+  printf '%s\n' "$window" > "$job_dir/window"
+  printf '%s\n' "$job_index" > "$job_dir/index"
+  crop=$(live_crop_spec)
+  audio=$(activity_value audio)
+  [[ -n $audio ]] || audio=$CONFIG_AUDIO
+  printf '%s\n' "$crop" > "$job_dir/crop"
+  printf '%s\n' "$audio" > "$job_dir/audio"
+  canvas=$(clip_resolution_size)
+  printf '%s\n' "$canvas" > "$job_dir/canvas"
+  printf '%s\n' "$CONFIG_CLIP_SCALE" > "$job_dir/scale"
+  flock -u 9
+  bash "${BASH_SOURCE[0]}" finish-save "$job_dir" >/dev/null 2>>"$LOG_FILE" &
+  printf '%s\n' "$!" > "$job_dir/pid"
+  disown $! 2>/dev/null || true
+  printf '%s\n' "$dest"
+}
+
+cmd_finish_save() {
+  local job_dir="${1:-}"
+  [[ -n $job_dir && -d $job_dir ]] || die "save job is missing"
+  load_config
+  local dest live window index crop audio canvas scale path joined=0
+  dest=$(<"$job_dir/dest")
+  live=$(<"$job_dir/live")
+  window=$(<"$job_dir/window")
+  index=$(<"$job_dir/index")
+  crop=$(<"$job_dir/crop")
+  audio=$(<"$job_dir/audio")
+  canvas=""
+  scale=""
+  [[ -r $job_dir/canvas ]] && canvas=$(<"$job_dir/canvas")
+  [[ -r $job_dir/scale ]] && scale=$(<"$job_dir/scale")
+  [[ -n $dest && -n $live ]] || die "save job is incomplete"
+  trap '[[ $joined == 1 ]] || rm -f "$dest"' EXIT
+  path=$(join_clip "$live" "$dest" "$window" "$index" "$crop" "$audio" "$canvas" "$scale")
+  joined=1
+  consume_segment_job "$index"
   rm -f "$live"
-  write_activity true "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$path"
+  write_activity "$(activity_value running)" "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$path"
   notify "Replay saved" "$path"
-  printf '%s\n' "$path"
+  rm -rf "$job_dir"
 }
 
 print_status_json() {
@@ -1773,6 +2113,7 @@ print_status_json() {
   printf '"ipc":%s,' "$(json_string "$IPC")"
   printf '"outputDir":%s,' "$(json_string "$(output_dir)")"
   printf '"lastClip":%s,' "$(json_string_or_null "${6:-}")"
+  printf '"saving":%s,' "$(saving_count)"
   local phase armed linger
   phase=$(activity_value phase)
   [[ -n $phase ]] || phase=$([[ $running == true ]] && echo live || echo off)
@@ -1791,6 +2132,7 @@ print_status_json() {
 
 cmd_status() {
   load_config
+  reap_save_jobs
   if [[ $CONFIG_MODE == follow || $CONFIG_MODE == pin ]]; then
     cmd_tick
   fi
@@ -1819,11 +2161,17 @@ cmd_status() {
     print_status_json "$running" "$monitor" "$seconds" "$audio" "$pid" "$last_clip"
     return
   fi
+  local saving
+  saving=$(saving_count)
   if [[ $running == true ]]; then
-    printf 'running %s last %ss audio=%s\n' "$monitor" "$seconds" "$audio"
+    printf 'running %s last %ss audio=%s' "$monitor" "$seconds" "$audio"
   else
-    printf 'stopped monitor=%s last %ss audio=%s\n' "${CONFIG_MONITOR:-focused}" "$CONFIG_SECONDS" "$CONFIG_AUDIO"
+    printf 'stopped monitor=%s last %ss audio=%s' "${CONFIG_MONITOR:-focused}" "$CONFIG_SECONDS" "$CONFIG_AUDIO"
   fi
+  if (( saving > 0 )); then
+    printf ' saving=%s' "$saving"
+  fi
+  printf '\n'
 }
 
 cmd_monitors() {
@@ -1950,6 +2298,8 @@ cmd_settings_show() {
   printf 'filter=%s\n' "$CONFIG_FILTER"
   printf 'matchList=%s\n' "${CONFIG_MATCH_LIST//$'\n'/,}"
   printf 'captureExtent=%s\n' "$CONFIG_CAPTURE_EXTENT"
+  printf 'clipResolution=%s\n' "$CONFIG_CLIP_RESOLUTION"
+  printf 'clipScale=%s\n' "$CONFIG_CLIP_SCALE"
   printf 'outputDir=%s\n' "$CONFIG_OUTPUT_DIR"
   printf 'region=%s\n' "$CONFIG_REGION"
   printf 'pinAddress=%s\n' "$CONFIG_PIN_ADDRESS"
@@ -1971,7 +2321,7 @@ cmd_settings_set() {
     [[ $CONFIG_SECONDS == "$value" ]] || die "seconds must be between $MIN_SECONDS and $MAX_SECONDS"
     ;;
   audio)
-    [[ $value == none || $value == desktop || $value == both ]] || die "audio must be none, desktop, or both"
+    [[ $value == none || $value == desktop || $value == both || $value == window || $value == window-mic ]] || die "audio must be none, desktop, both, window, or window-mic"
     CONFIG_AUDIO="$value"
     ;;
   mode)
@@ -1990,7 +2340,11 @@ cmd_settings_set() {
     ;;
   captureExtent)
     [[ $value == monitor || $value == window ]] || die "captureExtent must be monitor or window"
-    CONFIG_CAPTURE_EXTENT="$value"
+    if [[ $CONFIG_MODE == follow || $CONFIG_MODE == pin ]]; then
+      CONFIG_CAPTURE_EXTENT=window
+    else
+      CONFIG_CAPTURE_EXTENT="$value"
+    fi
     ;;
   codec)
     [[ -n $value ]] || die "codec must not be empty"
@@ -2018,6 +2372,12 @@ cmd_settings_set() {
   bitrateMode)
     [[ $value == cbr || $value == vbr ]] || die "bitrateMode must be cbr or vbr"
     CONFIG_BITRATE_MODE="$value"
+    ;;
+  clipResolution)
+    CONFIG_CLIP_RESOLUTION="$(normalize_clip_resolution "$value")"
+    ;;
+  clipScale)
+    CONFIG_CLIP_SCALE="$(normalize_clip_scale "$value")"
     ;;
   outputDir)
     config_value_safe "$value" || die "outputDir value contains a newline"
@@ -2062,7 +2422,7 @@ cmd_settings_set() {
     elif buffer_running || [[ $(activity_value phase) == live || $(activity_value phase) == linger ]]; then
       launch_recorder
     fi
-  elif [[ $key == matchList || $key == blacklist || $key == filter ]]; then
+  elif [[ $key == matchList || $key == blacklist || $key == filter || $key == clipResolution || $key == clipScale || $key == captureExtent || $key == outputDir ]]; then
     if [[ $CONFIG_MODE == follow ]] && follow_session_active; then
       cmd_follow_tick
     fi
@@ -2184,6 +2544,7 @@ main() {
   start) shift; cmd_start "$@" ;;
   stop) cmd_stop ;;
   save) shift; cmd_save "${1:-}" ;;
+  finish-save) shift; cmd_finish_save "${1:-}" ;;
   status) shift; cmd_status "${1:-}" ;;
   monitors) shift; cmd_monitors "${1:-}" ;;
   windows) shift; cmd_windows "${1:-}" ;;

@@ -12,6 +12,7 @@ BarWidget {
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
   readonly property bool running: panelLoader.item ? panelLoader.item.running === true : false
+  readonly property int savingCount: panelLoader.item ? panelLoader.item.savingCount : 0
   readonly property string helperPath: decodeURIComponent(String(Qt.resolvedUrl("bin/omarchy-shadowplay")).replace(/^file:\/\//, ""))
 
   implicitWidth: button.implicitWidth
@@ -73,13 +74,15 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: "󰑋"
-    active: root.running
+    active: root.running || root.savingCount > 0
     useActiveColor: true
-    dimmed: !root.running
+    dimmed: !root.running && root.savingCount === 0
     fontSize: Style.font.iconLarge
     opticalSize: Style.bar.iconCanvas + 8
     slotSize: Style.bar.iconSlot + 6
-    tooltipText: root.running ? "Save replay" : "Start replay buffer"
+    tooltipText: root.savingCount > 0
+      ? (root.savingCount === 1 ? "Saving clip" : "Saving " + root.savingCount + " clips")
+      : (root.running ? "Save replay" : "Start replay buffer")
 
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.MiddleButton) {
@@ -91,6 +94,29 @@ BarWidget {
         return
       }
       root.primaryAction()
+    }
+  }
+
+  Rectangle {
+    visible: root.savingCount > 0
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    anchors.rightMargin: 1
+    anchors.bottomMargin: 1
+    width: Math.max(Style.space(14), badgeLabel.implicitWidth + Style.space(6))
+    height: Math.max(Style.space(14), badgeLabel.implicitHeight + Style.space(2))
+    radius: height / 2
+    color: Color.urgent
+    z: 1
+
+    Text {
+      id: badgeLabel
+      anchors.centerIn: parent
+      text: root.savingCount > 9 ? "9+" : String(root.savingCount)
+      color: Color.background
+      font.family: Style.font.family
+      font.pixelSize: Style.font.caption
+      font.bold: true
     }
   }
 }

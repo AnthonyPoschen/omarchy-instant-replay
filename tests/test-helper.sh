@@ -36,6 +36,35 @@ fail() {
   exit 1
 }
 
+wait_for_clip() {
+  local path="$1" i
+  for i in $(seq 1 80); do
+    [[ -e $path ]] && return 0
+    sleep 0.05
+  done
+  fail "Clip was not written: $path"
+}
+
+wait_for_saves() {
+  local i status n
+  for i in $(seq 1 80); do
+    status=$("$helper" status --json)
+    n=$(echo "$status" | jq -r '.saving // 0')
+    [[ $n == 0 ]] && return 0
+    sleep 0.05
+  done
+  fail "save jobs still running: $status"
+}
+
+saved() {
+  local clip
+  clip=$("$helper" save "$@")
+  [[ -n $clip ]] || fail "save printed no path"
+  wait_for_clip "$clip"
+  wait_for_saves
+  printf '%s\n' "$clip"
+}
+
 assert_file_contains() {
   local file="$1" needle="$2"
   grep -F -- "$needle" "$file" >/dev/null || fail "$file did not contain: $needle"
@@ -85,28 +114,68 @@ assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-ipc"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "$XDG_RUNTIME_DIR/omarchy-shadowplay/gsr-output"
 
 status=$("$helper" status --json)
-echo "$status" | jq -e '.running == true and .monitor == "DP-1" and .seconds == 60 and .audio == "desktop"' >/dev/null \
+echo "$status" | jq -e '.running == true and .monitor == "DP-1" and .seconds == 60 and .audio == "desktop" and .saving == 0' >/dev/null \
   || fail "status json after start: $status"
-echo "$status" | jq -e '.mode == "monitor" and .filter == "all" and .captureExtent == "monitor" and (.matchList | length) == 0 and (.blacklist | length) == 3' >/dev/null \
+echo "$status" | jq -e '.mode == "monitor" and .filter == "all" and .captureExtent == "monitor" and .clipResolution == "1080p" and .clipScale == "fit" and (.matchList | length) == 0 and (.blacklist | length) == 3' >/dev/null \
   || fail "status json missing mode defaults: $status"
 echo "$status" | jq -e '.blacklist == ["waybar","walker","hyprlock"]' >/dev/null   || fail "new install blacklist should be Omarchy chrome: $status"
 echo "$status" | jq -e '.encoder.codec == "auto" and .encoder.fps == 60 and .encoder.quality == 40000 and .encoder.cursor == true and .encoder.framerateMode == "cfr" and .encoder.bitrateMode == "cbr"' >/dev/null \
   || fail "status json missing encoder knobs: $status"
 
-clip=$("$helper" save)
+clip=$(saved)
 [[ $clip == "$replay_dir/Replay-800.mp4" ]] || fail "save returned $clip"
 [[ -e $clip ]] || fail "Clip was not written"
 [[ ! -e $SHADOWPLAY_FAKE_DIR/saved-seconds ]] || fail "default save should not pass a seconds override"
-[[ ! -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "save without a Split should not stitch"
+[[ -e $SHADOWPLAY_FAKE_DIR/ffmpeg.args ]] || fail "Save should fit the Clip to 1080p"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "scale=1920:1080:force_original_aspect_ratio=decrease"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 1 ]] || fail "save without a Split should be one input, got $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list")"
+if grep -F "concat=n=" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" >/dev/null; then
+  fail "save without a Split should not concat Segments"
+fi
+[[ $(<"$SHADOWPLAY_FAKE_DIR/restart-replay") == true ]] || fail "Save should restart the Replay Buffer"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Save stopped capture"
 [[ $(public_clips) == "$clip" ]] || fail "Replays should contain only the Clip: $(public_clips)"
 assert_no_gsr_leftovers
 
 export SHADOWPLAY_NOW=801
-clip=$("$helper" save 30)
+clip=$(saved 30)
 [[ -e $SHADOWPLAY_FAKE_DIR/saved-seconds ]] || fail "save 30 did not record seconds"
 [[ $(<"$SHADOWPLAY_FAKE_DIR/saved-seconds") == 30 ]] || fail "save 30 stored the wrong duration"
 [[ $clip == "$replay_dir/Replay-801.mp4" ]] || fail "save 30 returned $clip"
 assert_no_gsr_leftovers
+
+export SHADOWPLAY_NOW=802
+"$helper" start --monitor=HDMI-A-1 >/dev/null
+export SHADOWPLAY_FFMPEG_HOLD="$work/ffmpeg-hold"
+: > "$SHADOWPLAY_FFMPEG_HOLD"
+"$helper" save >/dev/null &
+save_pid1=$!
+"$helper" save >/dev/null &
+save_pid2=$!
+for i in $(seq 1 40); do
+  status=$("$helper" status --json)
+  n=$(echo "$status" | jq -r '.saving // 0')
+  running_ff=0
+  [[ -r $SHADOWPLAY_FAKE_DIR/ffmpeg.running ]] && running_ff=$(<"$SHADOWPLAY_FAKE_DIR/ffmpeg.running")
+  if [[ $n == 2 ]] || [[ ${running_ff:-0} == 2 ]]; then
+    break
+  fi
+  sleep 0.05
+done
+status=$("$helper" status --json)
+echo "$status" | jq -e '.running == true and .saving >= 1' >/dev/null \
+  || fail "parallel Save should keep the buffer Live and show saving: $status"
+n=$(echo "$status" | jq -r '.saving')
+(( n >= 1 && n <= 2 )) || fail "expected 1-2 in-flight saves, got $n from $status"
+rm -f "$SHADOWPLAY_FFMPEG_HOLD"
+wait "$save_pid1" "$save_pid2"
+wait_for_saves
+status=$("$helper" status --json)
+echo "$status" | jq -e '.saving == 0' >/dev/null || fail "saving count should clear: $status"
+[[ $(public_clips | wc -l) == 4 ]] || fail "two parallel Saves should add two Clips, got $(public_clips)"
+assert_no_gsr_leftovers
+unset SHADOWPLAY_FFMPEG_HOLD
 
 "$helper" stop
 [[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "stop left the recorder running"
@@ -179,7 +248,7 @@ if "$helper" settings set outputDir "relative/replays" >/dev/null 2>"$work/outdi
 fi
 export SHADOWPLAY_NOW=5000
 "$helper" start --monitor=DP-1 --seconds=60 --audio=desktop >/dev/null
-clip=$("$helper" save)
+clip=$(saved)
 [[ $clip == "$work/custom-replays/Replay-5000.mp4" ]] || fail "custom clips folder save was $clip"
 [[ -e $clip ]] || fail "custom clips folder Clip was not written"
 "$helper" settings set outputDir "" >/dev/null
@@ -233,11 +302,12 @@ echo "$status" | jq -e '.running == true and .monitor == "HDMI-A-1"' >/dev/null 
 [[ $(public_clips || true) == "$before" ]] || fail "Split leaked a file into Replays"
 assert_no_gsr_leftovers
 
-clip=$("$helper" save)
+clip=$(saved)
 [[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Save after Split did not join Segments"
 [[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 2 ]] || fail "Save after Split should join 1 Segment + live"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "-filter_complex"
-assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "scale=5120:1440"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "scale=1920:1080:force_original_aspect_ratio=decrease"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "concat=n=2:v=1:a=1"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "-c:a"
 if grep -Fq -- "-c copy" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"; then
@@ -249,28 +319,39 @@ fi
 [[ $clip == "$replay_dir/Replay-1000.mp4" ]] || fail "joined Clip path was $clip"
 [[ -e $clip ]] || fail "joined Clip was not written"
 [[ $(public_clips) == "$clip" ]] || fail "Replays should contain only the joined Clip: $(public_clips)"
+[[ $(<"$SHADOWPLAY_FAKE_DIR/restart-replay") == true ]] || fail "Save after Split should restart the Replay Buffer"
+[[ ! -r $segment_index ]] || fail "Save should consume joined Segments"
+assert_no_gsr_leftovers
+
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list"
+export SHADOWPLAY_NOW=1001
+clip=$(saved)
+[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 1 ]] || fail "second Save should not re-join consumed Segments"
+[[ $clip == "$replay_dir/Replay-1001.mp4" ]] || fail "second Clip path was $clip"
+[[ $(public_clips | wc -l) == 2 ]] || fail "expected two public Clips after two Saves, got $(public_clips)"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "second Save stopped capture"
 assert_no_gsr_leftovers
 
 "$helper" start --monitor=DP-1 >/dev/null
 segment_count=$(grep -c . "$segment_index" || true)
-[[ $segment_count == 2 ]] || fail "A→B→A should keep both overlapping Segments, got $segment_count"
-[[ $(public_clips) == "$clip" ]] || fail "bounce Split leaked into Replays"
+[[ $segment_count == 1 ]] || fail "Split after Save should keep only new history, got $segment_count"
+[[ $(public_clips | wc -l) == 2 ]] || fail "bounce Split leaked into Replays"
 rm -f "$SHADOWPLAY_FAKE_DIR/concat.list"
-export SHADOWPLAY_NOW=1001
-clip=$("$helper" save)
-[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 3 ]] || fail "bounce Save should join both Segments + live"
-[[ $clip == "$replay_dir/Replay-1001.mp4" ]] || fail "bounce Clip path was $clip"
-[[ $(public_clips | wc -l) == 2 ]] || fail "expected two public Clips after two Saves, got $(public_clips)"
+export SHADOWPLAY_NOW=1002
+clip=$(saved)
+[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 2 ]] || fail "Split after Save should join 1 new Segment + live"
+[[ $clip == "$replay_dir/Replay-1002.mp4" ]] || fail "bounce Clip path was $clip"
+[[ $(public_clips | wc -l) == 3 ]] || fail "expected three public Clips after three Saves, got $(public_clips)"
 assert_no_gsr_leftovers
 
 "$helper" settings set monitor HDMI-A-1 >/dev/null
 segment_count=$(grep -c . "$segment_index" || true)
-[[ $segment_count == 3 ]] || fail "live settings Split should flush another Segment, got $segment_count"
+[[ $segment_count == 1 ]] || fail "live settings Split should flush another Segment, got $segment_count"
 assert_no_gsr_leftovers
 
 "$helper" settings set fps 30 >/dev/null
 segment_count=$(grep -c . "$segment_index" || true)
-[[ $segment_count == 4 ]] || fail "encoder settings should Split while Live, got $segment_count"
+[[ $segment_count == 2 ]] || fail "encoder settings should Split while Live, got $segment_count"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "30"
 "$helper" settings set codec hevc >/dev/null
 "$helper" settings set quality 20000 >/dev/null
@@ -278,7 +359,7 @@ assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "30"
 "$helper" settings set framerateMode vfr >/dev/null
 "$helper" settings set bitrateMode vbr >/dev/null
 segment_count=$(grep -c . "$segment_index" || true)
-[[ $segment_count == 9 ]] || fail "each encoder knob should Split while Live, got $segment_count"
+[[ $segment_count == 7 ]] || fail "each encoder knob should Split while Live, got $segment_count"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-k"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "hevc"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "20000"
@@ -288,14 +369,45 @@ assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "vfr"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "vbr"
 "$helper" settings set filter allowlist >/dev/null
 segment_count=$(grep -c . "$segment_index" || true)
-[[ $segment_count == 9 ]] || fail "filter should not Split, got $segment_count"
+[[ $segment_count == 7 ]] || fail "filter should not Split, got $segment_count"
+"$helper" settings set clipResolution 720p >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 7 ]] || fail "Clip resolution should not Split, got $segment_count"
+"$helper" settings set clipScale stretch >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 7 ]] || fail "Clip layout should not Split, got $segment_count"
+"$helper" settings set clipScale fit >/dev/null
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.clipResolution == "720p" and .clipScale == "fit"' >/dev/null || fail "clip layout settings: $settings"
+rm -f "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+clip=$(saved)
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "scale=1280:720:force_original_aspect_ratio=decrease"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "pad=1280:720:(ow-iw)/2:(oh-ih)/2"
+"$helper" settings set clipResolution 1080p >/dev/null
+"$helper" settings set clipScale stretch >/dev/null
+rm -f "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+clip=$(saved)
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "scale=1920:1080,setsar=1"
+if grep -F "force_original_aspect_ratio=" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" >/dev/null; then
+  fail "stretch should distort instead of fit/fill"
+fi
+"$helper" settings set clipScale center >/dev/null
+rm -f "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+clip=$(saved)
+grep -E 'crop=min\(iw\\?,1920\):min\(ih\\?,1080\)' "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" >/dev/null \
+  || fail "center native should crop overflow: $(<"$SHADOWPLAY_FAKE_DIR/ffmpeg.args")"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+if grep -F "force_original_aspect_ratio=" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" >/dev/null; then
+  fail "center native should not scale"
+fi
+"$helper" settings set clipScale fit >/dev/null
 assert_no_gsr_leftovers
 
 export SHADOWPLAY_NOW=1100
 rm -f "$SHADOWPLAY_FAKE_DIR/concat.list"
-clip=$("$helper" save)
+clip=$(saved)
 [[ ! -r $segment_index ]] || fail "Segments older than the Replay Window were kept"
-[[ ! -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "expired Segments should not be stitched"
+[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 1 ]] || fail "expired Segments should not be stitched"
 [[ $clip == "$replay_dir/Replay-1100.mp4" ]] || fail "Save after discard should be one Clip, got $clip"
 [[ -e $clip ]] || fail "discard Clip was not written"
 assert_no_gsr_leftovers
@@ -309,7 +421,7 @@ rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
 "$helper" settings set audio desktop >/dev/null
 segment_count=$(grep -c . "$segment_index" || true)
 [[ $segment_count == 1 ]] || fail "audio change should Split, got $segment_count"
-clip=$("$helper" save)
+clip=$(saved)
 [[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Save after audio Split did not join"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "anullsrc"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "concat=n=2:v=1:a=1"
@@ -325,7 +437,7 @@ rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
 export SHADOWPLAY_NOW=4060
 "$helper" start --monitor=HDMI-A-1 >/dev/null
 export SHADOWPLAY_NOW=4110
-clip=$("$helper" save)
+clip=$(saved)
 [[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Save after delayed Split did not join"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "-ss"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "50"
@@ -382,7 +494,8 @@ write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff2","focused":
 status=$("$helper" tick)
 echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "DP-1" and .subject == "firefox"' >/dev/null \
   || fail "reopen on same monitor should reclaim without Split: $status"
-[[ ! -r $segment_index ]] || fail "reopen Linger Split the buffer"
+[[ -r $segment_index ]] || fail "Linger should keep the closed Subject as a Segment"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Linger reopen stopped capture"
 
 write_windows '[]'
 status=$("$helper" tick)
@@ -403,7 +516,7 @@ echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "H
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "HDMI-A-1"
 [[ -r $segment_index ]] || fail "Follow Split did not keep a Segment"
 rm -f "$SHADOWPLAY_FAKE_DIR/concat.list"
-clip=$("$helper" save)
+clip=$(saved)
 [[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Follow Split Save did not stitch one Clip"
 [[ -e $clip ]] || fail "Follow Split Clip missing"
 "$helper" stop
@@ -433,6 +546,38 @@ echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "f
 [[ -r $segment_index ]] || fail "mode change away from Follow should Split (keep Segment)"
 "$helper" stop
 
+# Follow Window audio: app stream, optional mic, Split when the Subject's app changes.
+export SHADOWPLAY_NOW=8300
+rm -rf "$replay_dir"
+rm -f "$segment_index" "$SHADOWPLAY_FAKE_DIR/gsr.args"
+export SHADOWPLAY_APP_AUDIO_JSON='{"class:firefox":"Firefox","class:kitty":"kitty"}'
+"$helper" settings set mode follow >/dev/null
+"$helper" settings set filter all >/dev/null
+"$helper" settings set audio window >/dev/null
+write_windows '[{"class":"firefox","pid":4242,"monitor":"DP-1","address":"0xff","focused":true}]'
+"$helper" start >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.audio == "window" and .running == true and .subject == "firefox"' >/dev/null \
+  || fail "window audio status: $status"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "app:Firefox"
+if grep -F "default_output" "$SHADOWPLAY_FAKE_DIR/gsr.args" >/dev/null; then
+  fail "window audio should not capture desktop output"
+fi
+"$helper" settings set audio window-mic >/dev/null
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "app:Firefox"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "default_input"
+[[ -r $segment_index ]] || fail "switching to window-mic should Split"
+write_windows '[{"class":"kitty","pid":4243,"monitor":"DP-1","address":"0xkit","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "kitty" and .monitor == "DP-1" and .phase == "live"' >/dev/null \
+  || fail "window audio should follow the new Subject: $status"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "app:kitty"
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 2 ]] || fail "same-monitor app change should Split window audio, got $segment_count"
+unset SHADOWPLAY_APP_AUDIO_JSON
+"$helper" stop
+"$helper" settings set audio desktop >/dev/null
+
 # Follow Capture Extent: default Window, crop, linger gap, Split-on-change
 export SHADOWPLAY_NOW=8500
 rm -rf "$replay_dir"
@@ -447,46 +592,103 @@ echo "$settings" | jq -e '.mode == "follow" and .captureExtent == "window"' >/de
 settings=$("$helper" settings show --json)
 echo "$settings" | jq -e '.mode == "follow" and .captureExtent == "window"' >/dev/null \
   || fail "Follow should default Capture Extent to Window: $settings"
-write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true,"at":[3540,80],"size":[800,600]}]'
+write_windows '[{"class":"firefox","pid":4242,"monitor":"DP-1","address":"0xff","focused":true,"at":[3540,80],"size":[800,600]}]'
 "$helper" start >/dev/null
 status=$("$helper" status --json)
 echo "$status" | jq -e '.captureExtent == "window" and .running == true and .phase == "live"' >/dev/null \
   || fail "Follow Window extent status: $status"
 rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
-clip=$("$helper" save)
+clip=$(saved)
 [[ -e $SHADOWPLAY_FAKE_DIR/ffmpeg.args ]] || fail "Window extent Save should crop through ffmpeg"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "crop=800:600:100:80"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "scale=1920:1080:force_original_aspect_ratio=decrease"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
 [[ -e $clip ]] || fail "Window extent Clip missing"
 assert_no_gsr_leftovers
 
 write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true,"at":[3440,0],"size":[5120,1440]}]'
 "$helper" tick >/dev/null
 rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
-clip=$("$helper" save)
+clip=$(saved)
 if grep -F "crop=" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" >/dev/null 2>&1; then
   fail "fullscreen Subject should equal Monitor (no crop)"
 fi
 
-write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true,"at":[3540,80],"size":[800,600]}]'
+write_windows '[{"class":"firefox","pid":4242,"monitor":"DP-1","address":"0xff","focused":true,"at":[3540,80],"size":[800,600]}]'
 "$helper" tick >/dev/null
 "$helper" settings set captureExtent monitor >/dev/null
-segment_count=$(grep -c . "$segment_index" || true)
-[[ $segment_count == 1 ]] || fail "switching Extent while Live should Split, got $segment_count"
 status=$("$helper" status --json)
-echo "$status" | jq -e '.captureExtent == "monitor" and .running == true' >/dev/null \
-  || fail "extent switch status: $status"
-write_windows '[{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
+echo "$status" | jq -e '.captureExtent == "window" and .running == true' >/dev/null \
+  || fail "Follow should ignore monitor extent: $status"
+[[ ! -r $segment_index ]] || fail "Follow extent ignore Split the buffer"
+"$helper" stop
+
+# Follow same-monitor Subject change: rotate the ring, stitch per-window crops.
+export SHADOWPLAY_NOW=8600
+rm -rf "$replay_dir"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "$segment_index"
+"$helper" settings set mode follow >/dev/null
+"$helper" settings set filter all >/dev/null
+"$helper" settings set audio desktop >/dev/null
+write_windows '[{"class":"firefox","pid":4242,"monitor":"DP-1","address":"0xff","focused":true,"at":[3540,80],"size":[800,600]}]'
+"$helper" start >/dev/null
+export SHADOWPLAY_NOW=8620
+write_windows '[{"class":"kitty","pid":4243,"monitor":"DP-1","address":"0xkit","focused":true,"at":[3440,0],"size":[400,300]}]'
 status=$("$helper" tick)
-echo "$status" | jq -e '.phase == "linger"' >/dev/null || fail "extent linger: $status"
+echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "kitty" and .monitor == "DP-1"' >/dev/null \
+  || fail "same-monitor Follow should retarget the Subject: $status"
+[[ -r $segment_index ]] || fail "same-monitor Subject change should dump a Segment"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "same-monitor Subject change stopped capture"
+[[ $(<"$SHADOWPLAY_FAKE_DIR/restart-replay") == true ]] || fail "same-monitor Subject change should clear the Replay Buffer"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "DP-1"
+export SHADOWPLAY_NOW=8640
 rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
-clip=$("$helper" save)
-[[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Extent Split + linger Save should stitch one Clip"
-[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 2 ]] || fail "Save after Extent Split should stay one Clip (2 inputs)"
+clip=$(saved)
+[[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "same-monitor Follow Save did not stitch"
+[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 2 ]] || fail "same-monitor Follow Save should join Segment + live"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "crop=800:600:100:80"
-# linger/live monitor-extent input must not add a second crop
-crop_count=$(grep -o 'crop=800:600:100:80' "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" | wc -l)
-[[ $crop_count == 1 ]] || fail "linger gap should be monitor (one window crop only), got $crop_count"
-[[ -e $clip ]] || fail "extent Split Clip missing"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "crop=400:300:0:0"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "setpts=PTS-STARTPTS"
+[[ -e $clip ]] || fail "same-monitor Follow Clip missing"
+assert_no_gsr_leftovers
+"$helper" stop
+
+# Odd window sizes even-align for yuv420; many same-monitor swaps still stitch.
+export SHADOWPLAY_NOW=8700
+rm -rf "$replay_dir"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "$segment_index"
+"$helper" settings set mode follow >/dev/null
+"$helper" settings set filter all >/dev/null
+write_windows '[{"class":"firefox","pid":4242,"monitor":"DP-1","address":"0xff","focused":true,"at":[3541,81],"size":[801,601]}]'
+"$helper" start >/dev/null
+rm -f "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+clip=$(saved)
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "crop=800:600:102:82"
+"$helper" stop >/dev/null 2>&1 || true
+export SHADOWPLAY_NOW=8800
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "$segment_index"
+write_windows '[{"class":"firefox","pid":4242,"monitor":"DP-1","address":"0xff","focused":true,"at":[3540,80],"size":[800,600]}]'
+"$helper" start >/dev/null
+n=1
+while (( n <= 5 )); do
+  export SHADOWPLAY_NOW=$((8800 + n * 2))
+  if (( n % 2 == 1 )); then
+    write_windows '[{"class":"kitty","pid":4243,"monitor":"DP-1","address":"0xkit'"$n"'","focused":true,"at":[3440,0],"size":[400,300]}]'
+  else
+    write_windows '[{"class":"firefox","pid":4242,"monitor":"DP-1","address":"0xff'"$n"'","focused":true,"at":[3540,80],"size":[800,600]}]'
+  fi
+  "$helper" tick >/dev/null
+  n=$((n + 1))
+done
+[[ $(grep -c . "$segment_index" || true) == 5 ]] || fail "five same-monitor swaps should dump 5 Segments, got $(grep -c . "$segment_index" || true)"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "many Follow swaps stopped capture"
+export SHADOWPLAY_NOW=8820
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+clip=$(saved)
+[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 6 ]] || fail "many Follow swaps should join 5 Segments + live, got $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list")"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "concat=n=6"
+[[ -e $clip ]] || fail "many Follow swaps Clip missing"
+assert_no_gsr_leftovers
 "$helper" stop
 
 # Region Mode: persist rectangle, reject spanning, re-pick Split.
@@ -524,7 +726,7 @@ segment_count=$(grep -c . "$segment_index" || true)
 segment_count=$(grep -c . "$segment_index" || true)
 [[ $segment_count == 1 ]] || fail "re-pick while Live should Split, got $segment_count"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "200x200+120+80"
-clip=$("$helper" save)
+clip=$(saved)
 [[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Save after region re-pick did not join"
 [[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 2 ]] || fail "region re-pick Save should be one Clip from Segment + live"
 [[ $clip == "$replay_dir/Replay-9000.mp4" ]] || fail "region re-pick Clip path was $clip"
@@ -533,6 +735,8 @@ assert_no_gsr_leftovers
 "$helper" stop
 
 # Follow Filter=Denylist: pre-populated Blacklist, empty is louder than All, Sticky, no Split.
+write_windows '[]'
+"$helper" stop >/dev/null 2>&1 || true
 "$helper" settings set mode follow >/dev/null
 "$helper" settings set filter denylist >/dev/null
 settings=$("$helper" settings show --json)
@@ -569,7 +773,8 @@ grep -qx 'blacklist=' "$XDG_CONFIG_HOME/omarchy-shadowplay/config" \
 write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
 status=$("$helper" tick)
 echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "waybar"' >/dev/null   || fail "empty Denylist should follow chrome that All still skips: $status"
-[[ ! -r $segment_index ]] || fail "same-monitor empty-denylist chrome follow Split"
+[[ -r $segment_index ]] || fail "empty Denylist chrome follow should rotate the Replay Buffer"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "empty Denylist chrome follow stopped capture"
 
 "$helper" settings set filter all >/dev/null
 write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
@@ -634,7 +839,8 @@ write_windows '[{"class":"firefox","title":"Mozilla Firefox","monitor":"HDMI-A-1
 status=$("$helper" tick)
 echo "$status" | jq -e '.subject == "firefox" and .monitor == "HDMI-A-1"' >/dev/null \
   || fail "priority should pick first Match List rule when none focused: $status"
-[[ $(grep -c . "$segment_index" || true) == 1 ]] || fail "same-monitor priority pick should not Split again"
+[[ $(grep -c . "$segment_index" || true) == 2 ]] || fail "same-monitor priority pick should rotate the Replay Buffer, got $(grep -c . "$segment_index" || true)"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "same-monitor priority pick stopped capture"
 
 "$helper" settings set matchList "^fire.*" >/dev/null
 settings=$("$helper" settings show --json)
@@ -643,7 +849,7 @@ status=$("$helper" tick)
 echo "$status" | jq -e '.subject == "firefox" and .phase == "live"' >/dev/null \
   || fail "regex should keep firefox: $status"
 segment_count=$(grep -c . "$segment_index" || true)
-[[ $segment_count == 1 ]] || fail "editing Match List while Live Split, got $segment_count"
+[[ $segment_count == 2 ]] || fail "editing Match List while Live Split, got $segment_count"
 
 windows=$("$helper" windows --json)
 echo "$windows" | jq -e '.[0].class == "firefox" and .[0].title == "Mozilla Firefox"' >/dev/null \
@@ -734,7 +940,7 @@ echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "H
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "HDMI-A-1"
 [[ -r $segment_index ]] || fail "Pin move-output Split did not keep a Segment"
 rm -f "$SHADOWPLAY_FAKE_DIR/concat.list"
-clip=$("$helper" save)
+clip=$(saved)
 [[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Pin Split Save did not stitch one Clip"
 [[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 2 ]] || fail "Pin Split Save should join Segment + live"
 [[ -e $clip ]] || fail "Pin Split Clip missing"

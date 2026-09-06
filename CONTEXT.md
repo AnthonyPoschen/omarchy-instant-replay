@@ -36,7 +36,7 @@ Stock Omarchy start/stop capture (`omarchy screenrecord`). This plugin does not 
 _Avoid_: using "record" for Save or for the Replay Buffer
 
 **Capture Extent**:
-What the Clip frames contain. **Monitor** is the whole Buffer Target. **Window** is the Subject's rectangle; a fullscreen Subject is the same as Monitor. Follow Mode exposes this and defaults to Window. Pin is always Window. Monitor Mode and Region Mode have no Extent control.
+Follow and Pin always crop Save to the Subject rectangle (a fullscreen Subject is the same as the monitor). Monitor Mode is the whole output. Region Mode is the rectangle. There is no extra Extent control.
 
 **Subject**:
 The window the Replay Buffer is following. On Wayland this is not a GPU Screen Recorder window capture. The Subject chooses which monitor is the Buffer Target, and which rectangle Window extent uses.
@@ -55,13 +55,13 @@ The helper is running and watching. The Replay Buffer may be idle. Monitor Mode 
 The Replay Buffer is encoding.
 
 **Linger**:
-After the last Subject is destroyed, stay Live on that Buffer Target for one Replay Window. A matching window that reopens reclaims the Subject; same monitor is not a Split. The close and the reopen sit in the same buffer, including whatever was on that output in between. If nothing returns, stop and go back to Armed.
+After the last Subject is destroyed, dump its ring as a Segment (so Save keeps that window crop), then stay Live on that Buffer Target for one Replay Window with a full-output crop. A matching window that reopens reclaims the Subject; same monitor is not a Split. The linger gap and the reopen sit in the same buffer, including whatever was on that output in between. If nothing returns, stop and go back to Armed.
 
 **Sticky Subject**:
 When the focused window is not allowed to become the Subject, keep the last Subject. Alt-tab to Discord does not retarget. Linger is what happens after that window is gone.
 
 **Follow Mode**:
-UI name: Follow active window. One mode with a **Filter**: Allowlist (Match List), Denylist (Blacklist), or All (both lists unused). Among windows the Filter allows, the focused one is the Subject. Otherwise Sticky. An allowed window on another monitor is a Split; Save stitches. Filter=All still ignores built-in Omarchy chrome (bar, launcher, lock); that is not the same as emptying the Denylist.
+UI name: Follow active window. One mode with a **Filter**: Allowlist (Match List), Denylist (Blacklist), or All (both lists unused). Among windows the Filter allows, the focused one is the Subject. Otherwise Sticky. An allowed window on another monitor is a Split; Save stitches. A new Subject on the same monitor dumps the current ring as a Segment tagged with the old crop and clears the ring without stopping capture; Save stitches those Segments with the live buffer. Filter=All still ignores built-in Omarchy chrome (bar, launcher, lock); that is not the same as emptying the Denylist.
 _Avoid_: Smart Follow as a top-level mode, Open
 
 **Pin Mode**:
@@ -81,7 +81,17 @@ A Hyprland bind the user installs themselves. The plugin cannot write `bindings.
 Left-click the bar icon. Save when Live. Start or arm when not, according to mode.
 
 **Settings**:
-Right-click the bar icon. Shows only the controls the current mode needs. Mode is chosen first; the rest of the panel swaps. Extra groups (encoder, Filter lists, hotkey copy) are collapsible sections, collapsed by default — not a nav menu. Match List, Blacklist, and Pin target apply while Live. Mode, Buffer Target, Capture Extent, Replay Window length, audio, and encoder knobs Split if Live. Autostart only persists.
+Right-click the bar icon. Shows only the controls the current mode needs. Mode is chosen first; the rest of the panel swaps. Extra groups (encoder, Filter lists, hotkey copy) are collapsible sections, collapsed by default — not a nav menu. Match List, Blacklist, and Pin target apply while Live. Mode, Buffer Target, Replay Window length, audio, and encoder knobs Split if Live. Autostart only persists. Follow Save is always the Subject rectangle.
+
+**Audio**:
+What the Clip hears. **Desktop** is the system output. **Window** is the Subject's application stream (PipeWire `app:name`), so Discord and music stay out. **+ microphone** mixes in the default input. Monitor Mode and Region Mode have no Window option. Changing audio Splits. A Follow Subject whose app stream changes Splits even on the same monitor.
+_Avoid_: forcing system audio when the user asked for the game
+
+**Clip Resolution**:
+The fixed pixel size of the Clip. Not the Buffer Target size. Defaults to 1080p. Changing it does not Split.
+
+**Clip Layout**:
+How captured frames land on that canvas. **Fit** (default) scales to show the whole picture and adds bars. **Stretch** scales to the canvas and may distort aspect ratio. **Center** keeps native pixels, centered: bars if smaller, crop if larger. Changing it does not Split.
 
 **Encoder Settings**:
-User-visible GPU Screen Recorder knobs in Settings (codec, fps, quality, cursor, and similar). Hidden behind a collapsed section so Monitor Mode still looks like v0.1.
+User-visible GPU Screen Recorder knobs in Settings (codec, fps, quality, cursor, and similar). Hidden behind a collapsed section so Monitor Mode still looks like v0.1. Clip Resolution and Clip Layout are main Settings controls, not encoder extras.

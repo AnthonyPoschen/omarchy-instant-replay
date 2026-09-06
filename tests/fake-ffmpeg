@@ -6,6 +6,27 @@ mkdir -p "$FAKE_DIR"
 
 printf '%s\n' "$@" > "$FAKE_DIR/ffmpeg.args"
 
+running=0
+if [[ -r $FAKE_DIR/ffmpeg.running ]]; then
+  running=$(<"$FAKE_DIR/ffmpeg.running")
+fi
+printf '%s\n' "$((running + 1))" > "$FAKE_DIR/ffmpeg.running"
+
+cleanup_running() {
+  local n=0
+  [[ -r $FAKE_DIR/ffmpeg.running ]] && n=$(<"$FAKE_DIR/ffmpeg.running")
+  if [[ $n =~ ^[0-9]+$ ]] && (( n > 0 )); then
+    printf '%s\n' "$((n - 1))" > "$FAKE_DIR/ffmpeg.running"
+  fi
+}
+trap cleanup_running EXIT
+
+if [[ -n ${SHADOWPLAY_FFMPEG_HOLD:-} ]]; then
+  while [[ -e $SHADOWPLAY_FFMPEG_HOLD ]]; do
+    sleep 0.05
+  done
+fi
+
 : > "$FAKE_DIR/concat.list"
 out=""
 prev=""
