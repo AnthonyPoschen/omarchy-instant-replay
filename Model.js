@@ -39,14 +39,19 @@ function parseStatus(text) {
     captureExtent: normalizeCaptureExtent(status.captureExtent),
     matchList: stringList(status.matchList),
     blacklist: stringList(status.blacklist),
-    encoder: {
-      codec: String(encoder.codec || "auto"),
-      fps: boundedInteger(encoder.fps, 60, 1, 240),
-      quality: boundedInteger(encoder.quality, 40000, 1, 200000),
-      cursor: encoder.cursor !== false,
-      framerateMode: encoder.framerateMode === "vfr" ? "vfr" : "cfr",
-      bitrateMode: encoder.bitrateMode === "vbr" ? "vbr" : "cbr"
-    }
+    encoder: parseEncoder(encoder)
+  }
+}
+
+function parseEncoder(encoder) {
+  if (!encoder || typeof encoder !== "object") encoder = {}
+  return {
+    codec: normalizeCodec(encoder.codec),
+    fps: boundedInteger(encoder.fps, 60, minFps(), maxFps()),
+    quality: boundedInteger(encoder.quality, 40000, minQuality(), maxQuality()),
+    cursor: encoder.cursor !== false,
+    framerateMode: normalizeFramerateMode(encoder.framerateMode),
+    bitrateMode: normalizeBitrateMode(encoder.bitrateMode)
   }
 }
 
@@ -90,6 +95,20 @@ function normalizeCaptureExtent(value) {
   return "monitor"
 }
 
+function normalizeCodec(value) {
+  var codec = String(value || "auto")
+  if (codec === "auto" || codec === "h264" || codec === "hevc" || codec === "av1" || codec === "vp8" || codec === "vp9") return codec
+  return "auto"
+}
+
+function normalizeFramerateMode(value) {
+  return String(value || "cfr") === "vfr" ? "vfr" : "cfr"
+}
+
+function normalizeBitrateMode(value) {
+  return String(value || "cbr") === "vbr" ? "vbr" : "cbr"
+}
+
 function stringList(value) {
   if (!Array.isArray(value)) return []
   var out = []
@@ -114,6 +133,10 @@ function monitorOptions(monitors) {
 
 function minSeconds() { return 15 }
 function maxSeconds() { return 7200 }
+function minFps() { return 1 }
+function maxFps() { return 240 }
+function minQuality() { return 1 }
+function maxQuality() { return 200000 }
 
 function secondsOptions() {
   return [
@@ -155,6 +178,54 @@ function audioOptions() {
     { value: "none", label: "No audio" },
     { value: "desktop", label: "Desktop audio" },
     { value: "both", label: "Desktop + microphone" }
+  ]
+}
+
+function codecOptions() {
+  return [
+    { value: "auto", label: "Auto" },
+    { value: "h264", label: "H.264" },
+    { value: "hevc", label: "HEVC" },
+    { value: "av1", label: "AV1" },
+    { value: "vp8", label: "VP8" },
+    { value: "vp9", label: "VP9" }
+  ]
+}
+
+function fpsOptions() {
+  return [
+    { value: "24", label: "24 fps" },
+    { value: "30", label: "30 fps" },
+    { value: "60", label: "60 fps" },
+    { value: "120", label: "120 fps" },
+    { value: "144", label: "144 fps" },
+    { value: "165", label: "165 fps" },
+    { value: "240", label: "240 fps" }
+  ]
+}
+
+function qualityOptions() {
+  return [
+    { value: "10000", label: "10 Mbps" },
+    { value: "20000", label: "20 Mbps" },
+    { value: "40000", label: "40 Mbps" },
+    { value: "60000", label: "60 Mbps" },
+    { value: "80000", label: "80 Mbps" },
+    { value: "100000", label: "100 Mbps" }
+  ]
+}
+
+function framerateModeOptions() {
+  return [
+    { value: "cfr", label: "Constant (CFR)" },
+    { value: "vfr", label: "Variable (VFR)" }
+  ]
+}
+
+function bitrateModeOptions() {
+  return [
+    { value: "cbr", label: "Constant (CBR)" },
+    { value: "vbr", label: "Variable (VBR)" }
   ]
 }
 

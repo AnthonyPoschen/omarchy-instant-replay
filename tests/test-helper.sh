@@ -63,6 +63,16 @@ assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-r"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "60"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-c"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "mp4"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-f"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "60"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-k"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "auto"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-q"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "40000"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-fm"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "cfr"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-bm"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "cbr"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-a"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "default_output"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-ipc"
@@ -252,9 +262,23 @@ assert_no_gsr_leftovers
 segment_count=$(grep -c . "$segment_index" || true)
 [[ $segment_count == 4 ]] || fail "encoder settings should Split while Live, got $segment_count"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "30"
+"$helper" settings set codec hevc >/dev/null
+"$helper" settings set quality 20000 >/dev/null
+"$helper" settings set cursor false >/dev/null
+"$helper" settings set framerateMode vfr >/dev/null
+"$helper" settings set bitrateMode vbr >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 9 ]] || fail "each encoder knob should Split while Live, got $segment_count"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-k"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "hevc"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "20000"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-cursor"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "no"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "vfr"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "vbr"
 "$helper" settings set filter allowlist >/dev/null
 segment_count=$(grep -c . "$segment_index" || true)
-[[ $segment_count == 4 ]] || fail "filter should not Split, got $segment_count"
+[[ $segment_count == 9 ]] || fail "filter should not Split, got $segment_count"
 assert_no_gsr_leftovers
 
 export SHADOWPLAY_NOW=1100
