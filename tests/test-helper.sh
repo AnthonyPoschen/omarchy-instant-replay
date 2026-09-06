@@ -181,6 +181,7 @@ unset SHADOWPLAY_FFMPEG_HOLD
 [[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "stop left the recorder running"
 status=$("$helper" status --json)
 echo "$status" | jq -e '.running == false' >/dev/null || fail "status json after stop: $status"
+echo "$status" | jq -e '.phase == "off"' >/dev/null || fail "stop should be Off, not lingering capture: $status"
 
 "$helper" start --monitor=HDMI-A-1 --seconds=120 --audio=none >/dev/null
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "HDMI-A-1"
@@ -576,6 +577,17 @@ segment_count=$(grep -c . "$segment_index" || true)
 [[ $segment_count == 2 ]] || fail "same-monitor app change should Split window audio, got $segment_count"
 unset SHADOWPLAY_APP_AUDIO_JSON
 "$helper" stop
+export SHADOWPLAY_NOW=8350
+rm -f "$segment_index" "$SHADOWPLAY_FAKE_DIR/gsr.args"
+printf 'Firefox\nBrave\nSpotify\n' > "$SHADOWPLAY_FAKE_DIR/app-audio"
+"$helper" settings set audio window >/dev/null
+write_windows '[{"class":"brave-browser","pid":10001,"monitor":"DP-1","address":"0xbr","focused":true}]'
+"$helper" start >/dev/null
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "app:Brave"
+if grep -F "app:brave-browser" "$SHADOWPLAY_FAKE_DIR/gsr.args" >/dev/null; then
+  fail "window audio should map brave-browser to GSR name Brave"
+fi
+"$helper" stop
 "$helper" settings set audio desktop >/dev/null
 
 # Follow Capture Extent: default Window, crop, linger gap, Split-on-change
@@ -775,6 +787,17 @@ status=$("$helper" tick)
 echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "waybar"' >/dev/null   || fail "empty Denylist should follow chrome that All still skips: $status"
 [[ -r $segment_index ]] || fail "empty Denylist chrome follow should rotate the Replay Buffer"
 [[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "empty Denylist chrome follow stopped capture"
+
+export SHADOWPLAY_WINDOW_PICKER="$fake_window"
+export SHADOWPLAY_PICKED_WINDOW="0xkit"
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true},{"class":"kitty","monitor":"DP-1","address":"0xkit","focused":false}]'
+"$helper" settings set blacklist "waybar,walker,hyprlock" >/dev/null
+settings=$("$helper" pick-blacklist-window)
+echo "$settings" | jq -e '.mode == "follow" and .filter == "denylist" and (.blacklist | index("kitty") != null)' >/dev/null \
+  || fail "pick-blacklist-window should add the clicked window class: $settings"
+echo "$settings" | jq -e '.mode != "pin"' >/dev/null || fail "blacklist pick switched to Pin"
+unset SHADOWPLAY_WINDOW_PICKER
+unset SHADOWPLAY_PICKED_WINDOW
 
 "$helper" settings set filter all >/dev/null
 write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'

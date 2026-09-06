@@ -111,7 +111,7 @@ function normalizeMode(value) {
 
 function normalizeFilter(value) {
   var filter = String(value || "all")
-  if (filter === "all" || filter === "allowlist" || filter === "denylist") return filter
+  if (filter === "denylist") return "denylist"
   return "all"
 }
 
@@ -371,7 +371,6 @@ function modeOptions() {
 function filterOptions() {
   return [
     { value: "all", label: "All" },
-    { value: "allowlist", label: "Allowlist" },
     { value: "denylist", label: "Denylist" }
   ]
 }

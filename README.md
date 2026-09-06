@@ -86,20 +86,19 @@ a region or window take with the built-in recorder.
 
 ## Settings
 
-Monitor Mode only for v0.1: mode, monitor, Replay Window length, audio, and
-autostart. Encoder, match lists, and hotkey copy sit in collapsed extras.
+Monitor Mode only for v0.1: mode, monitor, Replay Window length, and audio.
+Encoder knobs sit in collapsed extras. The Replay Buffer remembers whether
+it was on; the shell starts it again if the last session was Live or Armed.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `monitor` | empty | Capture this connector (`DP-1`, `HDMI-A-1`, …). Empty uses the focused monitor at start. |
 | `seconds` | `60` | Rolling Replay Window, 15–7200. |
 | `audio` | `desktop` | `none`, `desktop`, or `both` (desktop + microphone). |
-| `autostart` | `false` | Start the buffer when the bar widget loads. |
 
 ```sh
 omarchy bar set io.github.anthonyposchen.shadowplay seconds 120 --json
 omarchy bar set io.github.anthonyposchen.shadowplay audio desktop --json
-omarchy bar set io.github.anthonyposchen.shadowplay autostart true --json
 ```
 
 ## Development

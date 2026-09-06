@@ -123,6 +123,7 @@ Usage:
   $PROGRAM settings set pinAddress <hyprland-address>
   $PROGRAM pick-region
   $PROGRAM pick-window
+  $PROGRAM pick-blacklist-window
   $PROGRAM tick
   $PROGRAM doctor
   $PROGRAM --help
@@ -715,6 +716,45 @@ pick_window_from_menu() {
   printf '%s\n' "$addr"
 }
 
+pick_window_from_click() {
+  local slurp="${SHADOWPLAY_SLURP_BIN:-slurp}"
+  command -v "$slurp" >/dev/null 2>&1 || return 1
+  local line klass addr atx aty ww hh boxes="" spec rx ry rw rh cx cy
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    IFS='|' read -r klass _ _ addr _ _ atx aty ww hh _ <<<"$line"
+    [[ -n $addr && $atx =~ ^-?[0-9]+$ && $aty =~ ^-?[0-9]+$ && $ww =~ ^[0-9]+$ && $hh =~ ^[0-9]+$ ]] || continue
+    (( ww > 0 && hh > 0 )) || continue
+    boxes+="${atx},${aty} ${ww}x${hh}"$'\n'
+  done < <(parse_windows)
+  [[ -n $boxes ]] || die "no windows to pick"
+  spec=$("$slurp" -r <<<"$boxes") || die "window picker was cancelled"
+  spec=$(normalize_region_spec "$spec") || die "window picker returned an invalid rectangle"
+  parse_region_spec "$spec" || die "window picker returned an invalid rectangle"
+  rx=$REGION_X; ry=$REGION_Y; rw=$REGION_W; rh=$REGION_H
+  cx=$((rx + rw / 2))
+  cy=$((ry + rh / 2))
+  local best="" best_area=0 area
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    IFS='|' read -r klass _ _ addr _ _ atx aty ww hh _ <<<"$line"
+    [[ -n $addr && $atx =~ ^-?[0-9]+$ && $aty =~ ^-?[0-9]+$ && $ww =~ ^[0-9]+$ && $hh =~ ^[0-9]+$ ]] || continue
+    if (( rx == atx && ry == aty && rw == ww && rh == hh )); then
+      printf '%s\n' "$addr"
+      return 0
+    fi
+    if (( cx >= atx && cy >= aty && cx < atx + ww && cy < aty + hh )); then
+      area=$((ww * hh))
+      if [[ -z $best ]] || (( area < best_area )); then
+        best=$addr
+        best_area=$area
+      fi
+    fi
+  done < <(parse_windows)
+  [[ -n $best ]] || die "window picker did not hit a window"
+  printf '%s\n' "$best"
+}
+
 pick_window_address() {
   local bin="${SHADOWPLAY_WINDOW_PICKER:-}" out addr
   if [[ -n $bin ]]; then
@@ -727,7 +767,21 @@ pick_window_address() {
     printf '%s\n' "$addr"
     return
   fi
+  pick_window_from_click && return
   pick_window_from_menu
+}
+
+append_blacklist_class() {
+  local class="$1" line
+  [[ -n $class ]] || return 1
+  while IFS= read -r line; do
+    [[ $line == "$class" ]] && return 0
+  done <<<"$CONFIG_BLACKLIST"
+  if [[ -n $CONFIG_BLACKLIST ]]; then
+    CONFIG_BLACKLIST+=$'\n'"$class"
+  else
+    CONFIG_BLACKLIST="$class"
+  fi
 }
 
 focused_monitor() {
@@ -1125,31 +1179,47 @@ live_capture_differs() {
   return 1
 }
 
-stop_recorder() {
+our_recorder_pids() {
   local pid=""
-  pid=$(read_pid 2>/dev/null || true)
-  if [[ -z $pid ]] && ! cli_running; then
-    rm -f "$PID_FILE"
+  if [[ -n ${SHADOWPLAY_FAKE_DIR:-} ]]; then
+    pid=$(read_pid 2>/dev/null || true)
+    [[ -n $pid ]] && printf '%s\n' "$pid"
     return 0
   fi
+  pgrep -f "^${PROCESS_NAME}( |$)" 2>/dev/null || true
+}
 
+stop_recorder() {
+  local pid extra
+  pid=$(read_pid 2>/dev/null || true)
   if cli_running; then
     "$GSR_CLI_BIN" -ipc "$IPC" stop >/dev/null 2>&1 || true
   fi
   if [[ -n $pid ]] && pid_alive "$pid"; then
     kill -INT "$pid" 2>/dev/null || true
   fi
-  if ! wait_until_stopped "$pid"; then
-    if [[ -n $pid ]] && pid_alive "$pid"; then
-      kill -KILL "$pid" 2>/dev/null || true
-    fi
+  while IFS= read -r extra; do
+    [[ -n $extra ]] || continue
+    kill -INT "$extra" 2>/dev/null || true
+  done < <(our_recorder_pids)
+  wait_until_stopped "$pid" || true
+  if [[ -n $pid ]] && pid_alive "$pid"; then
+    kill -KILL "$pid" 2>/dev/null || true
   fi
+  while IFS= read -r extra; do
+    [[ -n $extra ]] || continue
+    kill -KILL "$extra" 2>/dev/null || true
+  done < <(our_recorder_pids)
   rm -f "$PID_FILE" "$IPC"
 }
 
 launch_recorder() {
   command -v "$GSR_BIN" >/dev/null 2>&1 || die "gpu-screen-recorder is not installed"
   command -v "$GSR_CLI_BIN" >/dev/null 2>&1 || die "gsr-cli is not installed"
+
+  if [[ -n $(our_recorder_pids) ]]; then
+    stop_recorder
+  fi
 
   if capture_device_busy; then
     die_device_busy
@@ -1660,8 +1730,29 @@ window_pid() {
 
 application_audio_name() {
   local pid="${1:-}" class="${2:-}"
-  SHADOWPLAY_LOOKUP_PID="$pid" SHADOWPLAY_LOOKUP_CLASS="$class" python3 -c '
-import json, os, subprocess, sys
+  SHADOWPLAY_LOOKUP_PID="$pid" SHADOWPLAY_LOOKUP_CLASS="$class" SHADOWPLAY_GSR_BIN="$GSR_BIN" python3 -c '
+import json, os, re, subprocess
+
+def tokens(value):
+    value = (value or "").lower().replace("_", "-")
+    skip = {"com", "org", "io", "www", "app"}
+    return [part for part in re.split(r"[^a-z0-9]+", value) if part and part not in skip]
+
+def ancestors(pid):
+    found = set()
+    cur = str(pid or "")
+    while cur and cur != "0" and cur not in found:
+        found.add(cur)
+        try:
+            with open("/proc/%s/stat" % cur, "r", encoding="utf-8") as fh:
+                st = fh.read()
+            close = st.rfind(")")
+            parts = st[close + 1:].split()
+            cur = parts[1] if len(parts) > 1 else ""
+        except Exception:
+            break
+    return found
+
 pid = str(os.environ.get("SHADOWPLAY_LOOKUP_PID") or "")
 klass = str(os.environ.get("SHADOWPLAY_LOOKUP_CLASS") or "")
 override = os.environ.get("SHADOWPLAY_APP_AUDIO")
@@ -1682,15 +1773,31 @@ if raw:
     key = klass.lower()
     print(mapping.get("class:" + key) or mapping.get(klass) or mapping.get(key) or "")
     raise SystemExit
+
+sinks = None
+sink_raw = os.environ.get("SHADOWPLAY_SINK_INPUTS_JSON") or ""
+if sink_raw:
+    try:
+        sinks = json.loads(sink_raw)
+    except Exception:
+        sinks = []
+if sinks is None:
+    try:
+        sinks = json.loads(subprocess.check_output(["pactl", "--format=json", "list", "sink-inputs"], text=True, stderr=subprocess.DEVNULL))
+    except Exception:
+        sinks = []
+if not isinstance(sinks, list):
+    sinks = []
+
+gsr = os.environ.get("SHADOWPLAY_GSR_BIN") or "gpu-screen-recorder"
 try:
-    data = json.loads(subprocess.check_output(["pactl", "--format=json", "list", "sink-inputs"], text=True, stderr=subprocess.DEVNULL))
+    gsr_apps = [line.strip() for line in subprocess.check_output([gsr, "--list-application-audio"], text=True, stderr=subprocess.DEVNULL).splitlines() if line.strip()]
 except Exception:
-    data = []
-if not isinstance(data, list):
-    data = []
-want_pid = pid
-want_class = klass.lower()
-for item in data:
+    gsr_apps = []
+
+class_tokens = set(tokens(klass))
+best_name, best_score = "", -1
+for item in sinks:
     if not isinstance(item, dict):
         continue
     props = item.get("properties") or item.get("proplist") or {}
@@ -1698,15 +1805,34 @@ for item in data:
         continue
     name = str(props.get("application.name") or "").strip()
     proc_id = str(props.get("application.process.id") or "").strip()
-    binary = str(props.get("application.process.binary") or "").strip().lower()
+    binary = str(props.get("application.process.binary") or "").strip()
     if not name:
         continue
-    if want_pid and proc_id == want_pid:
-        print(name)
-        raise SystemExit
-    if want_class and (binary == want_class or binary.endswith("." + want_class) or want_class in binary):
-        print(name)
-        raise SystemExit
+    score = 0
+    if pid and proc_id == pid:
+        score = 100
+    elif pid and proc_id and pid in ancestors(proc_id):
+        score = 90
+    else:
+        overlap = len(class_tokens & (set(tokens(binary)) | set(tokens(name))))
+        if overlap:
+            score = 50 + overlap * 10
+    if name in gsr_apps:
+        score += 5
+    if score > best_score:
+        best_name, best_score = name, score
+if best_score >= 50:
+    print(best_name)
+    raise SystemExit
+
+best_name, best_overlap = "", 0
+for name in gsr_apps:
+    overlap = len(class_tokens & set(tokens(name)))
+    if overlap > best_overlap:
+        best_name, best_overlap = name, overlap
+if best_overlap >= 1:
+    print(best_name)
+    raise SystemExit
 print("")
 '
 }
@@ -2484,6 +2610,21 @@ cmd_pick_window() {
   cmd_settings_show --json
 }
 
+cmd_pick_blacklist_window() {
+  load_config
+  local addr line class
+  addr=$(pick_window_address)
+  line=$(window_line_by_address "$addr") || die "could not resolve the picked window"
+  IFS='|' read -r class _ <<<"$line"
+  [[ -n $class ]] || die "could not resolve the picked window"
+  append_blacklist_class "$class"
+  write_config
+  if [[ $CONFIG_MODE == follow ]] && follow_session_active; then
+    cmd_follow_tick
+  fi
+  cmd_settings_show --json
+}
+
 cmd_pick_region() {
   load_config
   local spec
@@ -2559,6 +2700,7 @@ main() {
   tick) cmd_tick; cmd_status --json ;;
   pick-region) cmd_pick_region ;;
   pick-window) cmd_pick_window ;;
+  pick-blacklist-window) cmd_pick_blacklist_window ;;
   doctor) cmd_doctor ;;
   *) die_usage "unknown command: $cmd" ;;
   esac

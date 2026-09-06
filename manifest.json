@@ -20,7 +20,6 @@
       "monitor": "",
       "seconds": 60,
       "audio": "desktop",
-      "autostart": false,
       "outputDir": ""
     },
     "schema": [
@@ -47,12 +46,6 @@
         "options": ["none", "desktop", "both"],
         "defaultValue": "desktop",
         "description": "none records video only. desktop is system audio. both mixes system audio and the microphone."
-      },
-      {
-        "key": "autostart",
-        "type": "boolean",
-        "label": "Start buffer with the bar",
-        "defaultValue": false
       },
       {
         "key": "outputDir",

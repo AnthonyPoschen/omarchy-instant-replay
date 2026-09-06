@@ -16,18 +16,14 @@ Panel {
   property string helperPath: ""
   property var status: ({ running: false, monitor: "", seconds: 60, audio: "desktop", lastClip: "", saving: 0, phase: "off", armed: false, linger: false, subject: "" })
   property var monitors: []
-  property var windows: []
   property bool busy: false
-  property bool autostartAttempted: false
+  property bool resumeAttempted: false
   property string lastError: ""
   property string focusSection: "toggle"
   property bool cursorActive: false
   property bool extrasEncoderOpen: false
-  property bool extrasListsOpen: false
-  property bool extrasHotkeysOpen: false
   property string hotkeyCopyStatus: ""
   property string clipCopyStatus: ""
-  property bool blacklistFieldFocused: false
 
   readonly property var barIdentity: hostWidget || root
   readonly property bool running: status.running === true
@@ -42,7 +38,6 @@ Panel {
       return audio === "window-mic" ? "both" : "desktop"
     return audio
   }
-  readonly property bool configuredAutostart: setting("autostart", false) === true || String(setting("autostart", false)) === "true"
   readonly property string configuredOutputDir: String(setting("outputDir", "") || "")
   readonly property string configuredMode: Model.normalizeMode(setting("mode", "monitor"))
   readonly property string configuredRegion: String(setting("region", "") || "")
@@ -54,7 +49,6 @@ Panel {
   readonly property var secondsChoices: Model.secondsOptions()
   readonly property var audioChoices: Model.audioOptions(root.configuredMode)
   readonly property var filterChoices: Model.filterOptions()
-  readonly property var configuredMatchList: Model.stringList(setting("matchList", []))
   readonly property string configuredFilter: Model.normalizeFilter(setting("filter", "all"))
   readonly property var clipResolutionChoices: Model.clipResolutionOptions()
   readonly property string configuredClipResolution: Model.normalizeClipResolution(setting("clipResolution", "1080p"))
@@ -131,93 +125,6 @@ Panel {
     actionProc.running = true
   }
 
-  function joinMatchList(list) {
-    var out = []
-    for (var i = 0; i < list.length; i++) {
-      var item = String(list[i] || "").trim()
-      if (item) out.push(item)
-    }
-    return out.join(",")
-  }
-
-  function applyMatchList(list) {
-    var cleaned = []
-    for (var i = 0; i < list.length; i++) {
-      var item = String(list[i] || "").trim()
-      if (item) cleaned.push(item)
-    }
-    root.persistSettings({ matchList: cleaned })
-    if (root.helperPath === "" || actionProc.running) return
-    root.busy = true
-    root.lastError = ""
-    actionProc.command = root.runHelper(["settings", "set", "matchList", root.joinMatchList(cleaned)])
-    actionProc.running = true
-  }
-
-  function addMatchClass(klass) {
-    var rule = String(klass || "").trim()
-    if (rule === "") return
-    var list = root.configuredMatchList.slice()
-    for (var i = 0; i < list.length; i++) if (list[i] === rule) return
-    list.push(rule)
-    root.applyMatchList(list)
-  }
-
-  function addFocusedMatch() {
-    for (var i = 0; i < root.windows.length; i++) {
-      if (root.windows[i].focused === true) {
-        root.addMatchClass(root.windows[i].className || root.windows[i].initialClass)
-        return
-      }
-    }
-  }
-
-  function removeMatchAt(index) {
-    var list = root.configuredMatchList.slice()
-    if (index < 0 || index >= list.length) return
-    list.splice(index, 1)
-    root.applyMatchList(list)
-  }
-
-  function moveMatch(index, delta) {
-    var list = root.configuredMatchList.slice()
-    var next = index + delta
-    if (index < 0 || next < 0 || index >= list.length || next >= list.length) return
-    var tmp = list[index]
-    list[index] = list[next]
-    list[next] = tmp
-    root.applyMatchList(list)
-  }
-
-  function updateMatchAt(index, value) {
-    var list = root.configuredMatchList.slice()
-    if (index < 0 || index >= list.length) return
-    var rule = String(value || "").trim()
-    if (rule === "") list.splice(index, 1)
-    else list[index] = rule
-    root.applyMatchList(list)
-  }
-
-  function windowLabel(win) {
-    if (!win) return "window"
-    var title = String(win.title || "").trim()
-    if (title) return title
-    return String(win.className || win.initialClass || "window")
-  }
-
-  function titleForRule(rule) {
-    var needle = String(rule || "")
-    if (needle === "") return ""
-    for (var i = 0; i < root.windows.length; i++) {
-      var win = root.windows[i]
-      if (win.className === needle || win.initialClass === needle) {
-        var title = String(win.title || "").trim()
-        if (title && title !== needle) return title
-      }
-    }
-    return ""
-  }
-
   function runHelper(args) {
     var command = ["bash", root.helperPath]
     for (var i = 0; i < args.length; i++) command.push(args[i])
@@ -229,10 +136,6 @@ Panel {
     if (!monitorsProc.running) {
       monitorsProc.command = root.runHelper(["monitors", "--json"])
       monitorsProc.running = true
-    }
-    if (!windowsProc.running) {
-      windowsProc.command = root.runHelper(["windows", "--json"])
-      windowsProc.running = true
     }
     if (statusProc.running) return
     statusProc.command = root.runHelper(["status", "--json"])
@@ -275,7 +178,7 @@ Panel {
   function copyHotkeys() {
     var text = Model.hotkeyLuaSnippet()
     Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(text) + " | wl-copy"])
-    root.hotkeyCopyStatus = "Copied lua binds"
+    root.hotkeyCopyStatus = "Copied Super+Alt+R lua binds"
   }
 
   function copyLastClip() {
@@ -293,6 +196,18 @@ Panel {
       root.busy = true
       root.lastError = ""
       actionProc.command = root.runHelper(["pick-window"])
+      actionProc.running = true
+    })
+  }
+
+  function pickBlacklistWindow() {
+    if (root.helperPath === "" || actionProc.running) return
+    root.close()
+    Qt.callLater(function() {
+      if (actionProc.running) return
+      root.busy = true
+      root.lastError = ""
+      actionProc.command = root.runHelper(["pick-blacklist-window"])
       actionProc.running = true
     })
   }
@@ -319,16 +234,16 @@ Panel {
     })
   }
 
-  function maybeAutostart() {
-    if (root.autostartAttempted || root.helperPath === "") return
-    root.autostartAttempted = true
-    if (root.configuredAutostart && root.running === false) root.startBuffer()
+  function maybeResumeSession() {
+    if (root.resumeAttempted || root.helperPath === "") return
+    root.resumeAttempted = true
+    if (root.running) return
+    var phase = String(root.status.phase || "")
+    if (phase === "live" || phase === "armed" || phase === "linger")
+      root.startBuffer()
   }
 
   onHelperPathChanged: root.refresh()
-  onConfiguredAutostartChanged: {
-    if (root.configuredAutostart) root.maybeAutostart()
-  }
   Component.onCompleted: root.refresh()
 
   Timer {
@@ -365,7 +280,7 @@ Panel {
       Qt.callLater(function() {
         if (exitCode === 0) {
           root.status = Model.parseStatus(statusOutput.text)
-          root.maybeAutostart()
+          root.maybeResumeSession()
         } else if (root.lastError === "") {
           var message = String(statusError.text || "").trim()
           if (message !== "") root.lastError = message
@@ -380,16 +295,6 @@ Panel {
     onExited: function(exitCode) {
       Qt.callLater(function() {
         if (exitCode === 0) root.monitors = Model.parseMonitors(monitorsOutput.text)
-      })
-    }
-  }
-
-  Process {
-    id: windowsProc
-    stdout: StdioCollector { id: windowsOutput; waitForEnd: true }
-    onExited: function(exitCode) {
-      Qt.callLater(function() {
-        if (exitCode === 0) root.windows = Model.parseWindows(windowsOutput.text)
       })
     }
   }
@@ -424,17 +329,18 @@ Panel {
         } else {
           root.lastError = ""
           var parsed = Model.parseJson(actionOutput.text, null)
-          if (parsed && typeof parsed === "object" && (parsed.region !== undefined || parsed.pinAddress !== undefined)) {
+          if (parsed && typeof parsed === "object" && (parsed.region !== undefined || parsed.pinAddress !== undefined || parsed.blacklist !== undefined)) {
             var values = {}
             if (parsed.region !== undefined) values.region = String(parsed.region || "")
             if (parsed.pinAddress !== undefined) values.pinAddress = String(parsed.pinAddress || "")
+            if (parsed.blacklist !== undefined) values.blacklist = Model.encodeList(parsed.blacklist)
             if (parsed.mode) values.mode = Model.normalizeMode(parsed.mode)
             root.persistSettings(values)
           }
         }
         root.refresh()
         var lastArg = String(actionProc.command && actionProc.command.length ? actionProc.command[actionProc.command.length - 1] : "")
-        if (lastArg === "pick-region" || lastArg === "pick-window")
+        if (lastArg === "pick-region" || lastArg === "pick-window" || lastArg === "pick-blacklist-window")
           root.open()
       })
     }
@@ -453,7 +359,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: monitorDropdown.popupOpen || secondsDropdown.popupOpen || audioDropdown.popupOpen || modeDropdown.popupOpen || filterDropdown.popupOpen || clipResolutionDropdown.popupOpen || clipScaleDropdown.popupOpen || codecDropdown.popupOpen || fpsDropdown.popupOpen || qualityDropdown.popupOpen || framerateDropdown.popupOpen || bitrateDropdown.popupOpen || blacklistAddField.activeFocus || root.blacklistFieldFocused
+      blocked: monitorDropdown.popupOpen || secondsDropdown.popupOpen || audioDropdown.popupOpen || modeDropdown.popupOpen || filterDropdown.popupOpen || clipResolutionDropdown.popupOpen || clipScaleDropdown.popupOpen || codecDropdown.popupOpen || fpsDropdown.popupOpen || qualityDropdown.popupOpen || framerateDropdown.popupOpen || bitrateDropdown.popupOpen
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -485,7 +391,7 @@ Panel {
         Toggle {
           width: parent.width
           label: "Replay buffer"
-          description: root.running ? "Live. Left-click the bar icon to save." : (root.armed ? "Armed. Waiting for a window." : "Off. Start to keep the last Replay Window.")
+          description: root.running ? "Live. Left-click the bar icon to save." : (root.armed ? "Armed. Waiting for a window." : "Off. Nothing is being captured.")
           checked: root.sessionOn
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
@@ -566,33 +472,15 @@ Panel {
               width: parent.width
               spacing: Style.space(6)
 
-              TextField {
-                width: parent.width - 3 * 36 - 3 * parent.spacing
+              Text {
+                width: parent.width - 36 - parent.spacing
                 text: modelData
-                foreground: root.contentForeground
-                onActiveFocusChanged: root.blacklistFieldFocused = activeFocus
-                onEditingFinished: {
-                  if (text === modelData) return
-                  root.applyBlacklist(Model.replaceListItem(root.configuredBlacklist, index, text))
-                }
-              }
-
-              Button {
-                width: 36
-                text: "↑"
-                enabled: !root.busy && index > 0
-                foreground: root.contentForeground
-                fontFamily: root.contentFontFamily
-                onClicked: root.applyBlacklist(Model.moveListItem(root.configuredBlacklist, index, -1))
-              }
-
-              Button {
-                width: 36
-                text: "↓"
-                enabled: !root.busy && index < root.configuredBlacklist.length - 1
-                foreground: root.contentForeground
-                fontFamily: root.contentFontFamily
-                onClicked: root.applyBlacklist(Model.moveListItem(root.configuredBlacklist, index, 1))
+                elide: Text.ElideMiddle
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.body
+                verticalAlignment: Text.AlignVCenter
+                height: 36
               }
 
               Button {
@@ -606,28 +494,13 @@ Panel {
             }
           }
 
-          Row {
+          Button {
             width: parent.width
-            spacing: Style.space(8)
-
-            TextField {
-              id: blacklistAddField
-              width: parent.width - addBlacklistButton.width - parent.spacing
-              placeholderText: "class or regex"
-              foreground: root.contentForeground
-            }
-
-            Button {
-              id: addBlacklistButton
-              text: "Add"
-              enabled: !root.busy
-              foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
-              onClicked: {
-                root.applyBlacklist(Model.appendListItem(root.configuredBlacklist, blacklistAddField.text))
-                blacklistAddField.text = ""
-              }
-            }
+            text: "Pick window"
+            enabled: !root.busy
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.pickBlacklistWindow()
           }
 
           Button {
@@ -637,115 +510,6 @@ Panel {
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
             onClicked: root.applyBlacklist([])
-          }
-        }
-
-        Column {
-          width: parent.width
-          spacing: Style.space(6)
-          visible: root.configuredMode === "follow" && root.configuredFilter === "allowlist"
-          height: visible ? implicitHeight : 0
-
-          Text {
-            text: "Match List"
-            color: Qt.darker(root.contentForeground, 1.4)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: true
-          }
-
-          Repeater {
-            model: root.configuredMatchList
-            delegate: Column {
-              width: parent.width
-              spacing: Style.space(2)
-
-              Text {
-                width: parent.width
-                visible: root.titleForRule(modelData) !== ""
-                height: visible ? implicitHeight : 0
-                text: root.titleForRule(modelData)
-                elide: Text.ElideRight
-                color: Qt.darker(root.contentForeground, 1.4)
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-              }
-
-              Row {
-                width: parent.width
-                spacing: Style.space(6)
-
-                TextField {
-                  id: matchField
-                  width: parent.width - upBtn.width - downBtn.width - removeBtn.width - parent.spacing * 3
-                  text: modelData
-                  placeholderText: "class or regex"
-                  foreground: root.contentForeground
-                  onEditingFinished: {
-                    if (text === modelData) return
-                    root.updateMatchAt(index, text)
-                  }
-                }
-
-                Button {
-                  id: upBtn
-                  text: "↑"
-                  enabled: !root.busy && index > 0
-                  foreground: root.contentForeground
-                  fontFamily: root.contentFontFamily
-                  onClicked: root.moveMatch(index, -1)
-                }
-
-                Button {
-                  id: downBtn
-                  text: "↓"
-                  enabled: !root.busy && index < root.configuredMatchList.length - 1
-                  foreground: root.contentForeground
-                  fontFamily: root.contentFontFamily
-                  onClicked: root.moveMatch(index, 1)
-                }
-
-                Button {
-                  id: removeBtn
-                  text: "×"
-                  enabled: !root.busy
-                  foreground: root.contentForeground
-                  fontFamily: root.contentFontFamily
-                  onClicked: root.removeMatchAt(index)
-                }
-              }
-            }
-          }
-
-          Button {
-            width: parent.width
-            text: "Add focused"
-            enabled: !root.busy
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.addFocusedMatch()
-          }
-
-          Text {
-            visible: root.windows.length > 0
-            height: visible ? implicitHeight : 0
-            text: "Open windows"
-            color: Qt.darker(root.contentForeground, 1.4)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: true
-          }
-
-          Repeater {
-            model: root.windows
-            delegate: Button {
-              width: parent.width
-              text: root.windowLabel(modelData)
-              enabled: !root.busy
-              foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
-              onClicked: root.addMatchClass(modelData.className || modelData.initialClass)
-            }
           }
         }
 
@@ -893,16 +657,6 @@ Panel {
           }
         }
 
-        Toggle {
-          width: parent.width
-          label: "Start with the bar"
-          description: "Begin buffering when Omarchy shell loads this widget."
-          checked: root.configuredAutostart
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onClicked: root.persistSettings({ autostart: !root.configuredAutostart })
-        }
-
         Button {
           width: parent.width
           text: root.running ? "Save replay" : (root.armed ? "Armed" : "Start buffer")
@@ -987,39 +741,13 @@ Panel {
           }
         }
 
-        ExtraGroup {
-          title: "Match lists"
-          open: root.extrasListsOpen
+        Button {
+          width: parent.width
+          text: root.hotkeyCopyStatus !== "" ? root.hotkeyCopyStatus : "Copy Super+Alt+R Save hotkey (lua binds)"
+          enabled: !root.busy
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
-          onToggled: root.extrasListsOpen = !root.extrasListsOpen
-
-          Text {
-            visible: root.configuredMode === "follow" && root.configuredFilter === "denylist"
-            width: parent.width
-            wrapMode: Text.WordWrap
-            text: "Blacklist is shown with Filter=Denylist. Emptying it follows chrome that Filter=All still skips."
-            color: Qt.darker(root.contentForeground, 1.3)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-          }
-        }
-
-        ExtraGroup {
-          title: "Hotkeys"
-          open: root.extrasHotkeysOpen
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onToggled: root.extrasHotkeysOpen = !root.extrasHotkeysOpen
-
-          Button {
-            width: parent.width
-            text: root.hotkeyCopyStatus !== "" ? root.hotkeyCopyStatus : "Copy lua binds"
-            enabled: !root.busy
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.copyHotkeys()
-          }
+          onClicked: root.copyHotkeys()
         }
       }
     }

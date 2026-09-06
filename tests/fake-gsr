@@ -10,6 +10,19 @@ if [[ ${1:-} == --list-monitors ]]; then
   exit 0
 fi
 
+if [[ ${1:-} == --list-application-audio ]]; then
+  if [[ -n ${SHADOWPLAY_GSR_APP_AUDIO:-} ]]; then
+    printf '%s\n' ${SHADOWPLAY_GSR_APP_AUDIO}
+    exit 0
+  fi
+  if [[ -r $FAKE_DIR/app-audio ]]; then
+    cat "$FAKE_DIR/app-audio"
+    exit 0
+  fi
+  printf 'Firefox\nBrave\nSpotify\nkitty\n'
+  exit 0
+fi
+
 if [[ ${1:-} == --version ]]; then
   printf 'fake-gsr 0.0.0\n'
   exit 0
