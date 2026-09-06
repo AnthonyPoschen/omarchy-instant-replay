@@ -430,6 +430,62 @@ echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "f
 [[ -r $segment_index ]] || fail "mode change away from Follow should Split (keep Segment)"
 "$helper" stop
 
+# Follow Capture Extent: default Window, crop, linger gap, Split-on-change
+export SHADOWPLAY_NOW=8500
+rm -rf "$replay_dir"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "$segment_index"
+"$helper" stop >/dev/null 2>&1 || true
+mkdir -p "$XDG_CONFIG_HOME/omarchy-shadowplay"
+printf 'monitor=\nseconds=60\naudio=desktop\nmode=follow\n' > "$XDG_CONFIG_HOME/omarchy-shadowplay/config"
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.mode == "follow" and .captureExtent == "window"' >/dev/null \
+  || fail "Follow config without captureExtent should default Window: $settings"
+"$helper" settings set mode follow >/dev/null
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.mode == "follow" and .captureExtent == "window"' >/dev/null \
+  || fail "Follow should default Capture Extent to Window: $settings"
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true,"at":[3540,80],"size":[800,600]}]'
+"$helper" start >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.captureExtent == "window" and .running == true and .phase == "live"' >/dev/null \
+  || fail "Follow Window extent status: $status"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+clip=$("$helper" save)
+[[ -e $SHADOWPLAY_FAKE_DIR/ffmpeg.args ]] || fail "Window extent Save should crop through ffmpeg"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "crop=800:600:100:80"
+[[ -e $clip ]] || fail "Window extent Clip missing"
+assert_no_gsr_leftovers
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true,"at":[3440,0],"size":[5120,1440]}]'
+"$helper" tick >/dev/null
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+clip=$("$helper" save)
+if grep -F "crop=" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" >/dev/null 2>&1; then
+  fail "fullscreen Subject should equal Monitor (no crop)"
+fi
+
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true,"at":[3540,80],"size":[800,600]}]'
+"$helper" tick >/dev/null
+"$helper" settings set captureExtent monitor >/dev/null
+segment_count=$(grep -c . "$segment_index" || true)
+[[ $segment_count == 1 ]] || fail "switching Extent while Live should Split, got $segment_count"
+status=$("$helper" status --json)
+echo "$status" | jq -e '.captureExtent == "monitor" and .running == true' >/dev/null \
+  || fail "extent switch status: $status"
+write_windows '[{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.phase == "linger"' >/dev/null || fail "extent linger: $status"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+clip=$("$helper" save)
+[[ -e $SHADOWPLAY_FAKE_DIR/concat.list ]] || fail "Extent Split + linger Save should stitch one Clip"
+[[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 2 ]] || fail "Save after Extent Split should stay one Clip (2 inputs)"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "crop=800:600:100:80"
+# linger/live monitor-extent input must not add a second crop
+crop_count=$(grep -o 'crop=800:600:100:80' "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" | wc -l)
+[[ $crop_count == 1 ]] || fail "linger gap should be monitor (one window crop only), got $crop_count"
+[[ -e $clip ]] || fail "extent Split Clip missing"
+"$helper" stop
+
 # Region Mode: persist rectangle, reject spanning, re-pick Split.
 export SHADOWPLAY_NOW=9000
 rm -rf "$replay_dir"

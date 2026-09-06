@@ -49,6 +49,8 @@ Panel {
   readonly property var filterChoices: Model.filterOptions()
   readonly property var configuredMatchList: Model.stringList(setting("matchList", []))
   readonly property string configuredFilter: Model.normalizeFilter(setting("filter", "all"))
+  readonly property var captureExtentChoices: Model.captureExtentOptions()
+  readonly property string configuredCaptureExtent: Model.normalizeCaptureExtent(setting("captureExtent", root.configuredMode === "follow" ? "window" : "monitor"))
   readonly property string configuredCodec: Model.normalizeCodec(setting("codec", "auto"))
   readonly property int configuredFps: Model.boundedInteger(setting("fps", 60), 60, Model.minFps(), Model.maxFps())
   readonly property int configuredQuality: Model.boundedInteger(setting("quality", 40000), 40000, Model.minQuality(), Model.maxQuality())
@@ -386,6 +388,7 @@ Panel {
           if (parsed && typeof parsed === "object" && parsed.region !== undefined) {
             var values = { region: String(parsed.region || "") }
             if (parsed.mode) values.mode = Model.normalizeMode(parsed.mode)
+            if (parsed.captureExtent) values.captureExtent = Model.normalizeCaptureExtent(parsed.captureExtent)
             root.persistSettings(values)
           }
         }
@@ -409,7 +412,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: monitorDropdown.popupOpen || secondsDropdown.popupOpen || audioDropdown.popupOpen || modeDropdown.popupOpen || filterDropdown.popupOpen || codecDropdown.popupOpen || fpsDropdown.popupOpen || qualityDropdown.popupOpen || framerateDropdown.popupOpen || bitrateDropdown.popupOpen || blacklistAddField.activeFocus || root.blacklistFieldFocused
+      blocked: monitorDropdown.popupOpen || secondsDropdown.popupOpen || audioDropdown.popupOpen || modeDropdown.popupOpen || filterDropdown.popupOpen || captureExtentDropdown.popupOpen || codecDropdown.popupOpen || fpsDropdown.popupOpen || qualityDropdown.popupOpen || framerateDropdown.popupOpen || bitrateDropdown.popupOpen || blacklistAddField.activeFocus || root.blacklistFieldFocused
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -703,6 +706,18 @@ Panel {
               onClicked: root.addMatchClass(modelData.className || modelData.initialClass)
             }
           }
+        }
+
+        Dropdown {
+          id: captureExtentDropdown
+          width: parent.width
+          visible: root.configuredMode === "follow"
+          label: "Capture Extent"
+          value: root.configuredCaptureExtent
+          options: root.captureExtentChoices
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          onChanged: function(value) { root.applySetting("captureExtent", Model.normalizeCaptureExtent(value)) }
         }
 
         Dropdown {
