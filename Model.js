@@ -19,6 +19,7 @@ function parseJson(text, fallback) {
 function parseStatus(text) {
   var status = parseJson(text, {})
   if (!status || typeof status !== "object") status = {}
+  var encoder = status.encoder && typeof status.encoder === "object" ? status.encoder : {}
   return {
     running: status.running === true,
     monitor: String(status.monitor || ""),
@@ -28,7 +29,20 @@ function parseStatus(text) {
     pid: String(status.pid || ""),
     ipc: String(status.ipc || ""),
     outputDir: String(status.outputDir || ""),
-    lastClip: String(status.lastClip || "")
+    lastClip: String(status.lastClip || ""),
+    mode: normalizeMode(status.mode),
+    filter: normalizeFilter(status.filter),
+    captureExtent: normalizeCaptureExtent(status.captureExtent),
+    matchList: stringList(status.matchList),
+    blacklist: stringList(status.blacklist),
+    encoder: {
+      codec: String(encoder.codec || "auto"),
+      fps: boundedInteger(encoder.fps, 60, 1, 240),
+      quality: boundedInteger(encoder.quality, 40000, 1, 200000),
+      cursor: encoder.cursor !== false,
+      framerateMode: encoder.framerateMode === "vfr" ? "vfr" : "cfr",
+      bitrateMode: encoder.bitrateMode === "vbr" ? "vbr" : "cbr"
+    }
   }
 }
 
@@ -52,6 +66,34 @@ function normalizeAudio(value) {
   var audio = String(value || "desktop")
   if (audio === "none" || audio === "desktop" || audio === "both") return audio
   return "desktop"
+}
+
+function normalizeMode(value) {
+  var mode = String(value || "monitor")
+  if (mode === "monitor" || mode === "follow" || mode === "pin" || mode === "region") return mode
+  return "monitor"
+}
+
+function normalizeFilter(value) {
+  var filter = String(value || "all")
+  if (filter === "all" || filter === "allowlist" || filter === "denylist") return filter
+  return "all"
+}
+
+function normalizeCaptureExtent(value) {
+  var extent = String(value || "monitor")
+  if (extent === "monitor" || extent === "window") return extent
+  return "monitor"
+}
+
+function stringList(value) {
+  if (!Array.isArray(value)) return []
+  var out = []
+  for (var i = 0; i < value.length; i++) {
+    var item = String(value[i] || "")
+    if (item) out.push(item)
+  }
+  return out
 }
 
 function monitorOptions(monitors) {

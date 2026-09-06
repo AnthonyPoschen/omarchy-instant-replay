@@ -48,6 +48,10 @@ assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-ipc"
 status=$("$helper" status --json)
 echo "$status" | jq -e '.running == true and .monitor == "DP-1" and .seconds == 60 and .audio == "desktop"' >/dev/null \
   || fail "status json after start: $status"
+echo "$status" | jq -e '.mode == "monitor" and .filter == "all" and .captureExtent == "monitor" and (.matchList | length) == 0 and (.blacklist | length) == 0' >/dev/null \
+  || fail "status json missing mode defaults: $status"
+echo "$status" | jq -e '.encoder.codec == "auto" and .encoder.fps == 60 and .encoder.quality == 40000 and .encoder.cursor == true and .encoder.framerateMode == "cfr" and .encoder.bitrateMode == "cbr"' >/dev/null \
+  || fail "status json missing encoder knobs: $status"
 
 clip=$("$helper" save)
 [[ $clip == "$SHADOWPLAY_FAKE_DIR/replay.mp4" ]] || fail "save returned $clip"
@@ -81,5 +85,30 @@ grep -q 'not available' "$work/err" || fail "missing monitor error was unclear: 
 monitors=$("$helper" monitors --json)
 echo "$monitors" | jq -e '.[0].name == "HDMI-A-1" and .[1].name == "DP-1" and .[1].focused == true' >/dev/null \
   || fail "monitors json: $monitors"
+
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.mode == "monitor" and .filter == "all" and .captureExtent == "monitor" and (.matchList | type) == "array" and (.blacklist | type) == "array"' >/dev/null \
+  || fail "settings json defaults: $settings"
+echo "$settings" | jq -e '.encoder.codec == "auto" and .encoder.fps == 60' >/dev/null \
+  || fail "settings json encoder: $settings"
+
+# v0.1 config without the new keys still starts one monitor replay buffer.
+"$helper" stop >/dev/null 2>&1 || true
+mkdir -p "$XDG_CONFIG_HOME/omarchy-shadowplay"
+printf 'monitor=\nseconds=60\naudio=desktop\n' > "$XDG_CONFIG_HOME/omarchy-shadowplay/config"
+"$helper" start >/dev/null
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-w"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "DP-1"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-r"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "60"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-f"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "60"
+if grep -F -- "-cursor" "$SHADOWPLAY_FAKE_DIR/gsr.args" >/dev/null; then
+  fail "default cursor should omit -cursor"
+fi
+status=$("$helper" status --json)
+echo "$status" | jq -e '.mode == "monitor" and .running == true and .seconds == 60' >/dev/null \
+  || fail "omitted keys should still default Monitor Mode: $status"
+"$helper" stop
 
 echo OK

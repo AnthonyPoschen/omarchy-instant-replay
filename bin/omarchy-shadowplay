@@ -21,12 +21,34 @@ FOCUSED_MONITOR_BIN="${SHADOWPLAY_FOCUSED_MONITOR_BIN:-omarchy-hyprland-monitor-
 
 DEFAULT_SECONDS=60
 DEFAULT_AUDIO="desktop"
+DEFAULT_MODE="monitor"
+DEFAULT_FILTER="all"
+DEFAULT_CAPTURE_EXTENT="monitor"
+DEFAULT_CODEC="auto"
+DEFAULT_FPS=60
+DEFAULT_QUALITY=40000
+DEFAULT_CURSOR="true"
+DEFAULT_FRAMERATE_MODE="cfr"
+DEFAULT_BITRATE_MODE="cbr"
 MIN_SECONDS=15
 MAX_SECONDS=600
+MIN_FPS=1
+MAX_FPS=240
 
 CONFIG_MONITOR=""
 CONFIG_SECONDS="$DEFAULT_SECONDS"
 CONFIG_AUDIO="$DEFAULT_AUDIO"
+CONFIG_MODE="$DEFAULT_MODE"
+CONFIG_FILTER="$DEFAULT_FILTER"
+CONFIG_CAPTURE_EXTENT="$DEFAULT_CAPTURE_EXTENT"
+CONFIG_CODEC="$DEFAULT_CODEC"
+CONFIG_FPS="$DEFAULT_FPS"
+CONFIG_QUALITY="$DEFAULT_QUALITY"
+CONFIG_CURSOR="$DEFAULT_CURSOR"
+CONFIG_FRAMERATE_MODE="$DEFAULT_FRAMERATE_MODE"
+CONFIG_BITRATE_MODE="$DEFAULT_BITRATE_MODE"
+CONFIG_MATCH_LIST=""
+CONFIG_BLACKLIST=""
 
 runtime_base() {
   local candidate="${XDG_RUNTIME_DIR:-}"
@@ -68,6 +90,15 @@ Usage:
   $PROGRAM settings set monitor <name|>
   $PROGRAM settings set seconds <15-600>
   $PROGRAM settings set audio <none|desktop|both>
+  $PROGRAM settings set mode <monitor|follow|pin|region>
+  $PROGRAM settings set filter <all|allowlist|denylist>
+  $PROGRAM settings set captureExtent <monitor|window>
+  $PROGRAM settings set codec <name>
+  $PROGRAM settings set fps <1-240>
+  $PROGRAM settings set quality <integer>
+  $PROGRAM settings set cursor <true|false>
+  $PROGRAM settings set framerateMode <cfr|vfr>
+  $PROGRAM settings set bitrateMode <cbr|vbr>
   $PROGRAM doctor
   $PROGRAM --help
   $PROGRAM --version
@@ -125,6 +156,57 @@ json_bool() {
   fi
 }
 
+json_string_array() {
+  local first="true" item
+  printf '['
+  if [[ -n ${1:-} ]]; then
+    while IFS= read -r item; do
+      [[ -n $item ]] || continue
+      [[ $first == true ]] || printf ','
+      first="false"
+      json_string "$item"
+    done <<<"$1"
+  fi
+  printf ']'
+}
+
+print_encoder_json() {
+  printf '{'
+  printf '"codec":%s,' "$(json_string "$CONFIG_CODEC")"
+  printf '"fps":%s,' "$CONFIG_FPS"
+  printf '"quality":%s,' "$CONFIG_QUALITY"
+  printf '"cursor":%s,' "$(json_bool "$CONFIG_CURSOR")"
+  printf '"framerateMode":%s,' "$(json_string "$CONFIG_FRAMERATE_MODE")"
+  printf '"bitrateMode":%s' "$(json_string "$CONFIG_BITRATE_MODE")"
+  printf '}'
+}
+
+print_settings_fields() {
+  printf '"mode":%s,' "$(json_string "$CONFIG_MODE")"
+  printf '"filter":%s,' "$(json_string "$CONFIG_FILTER")"
+  printf '"captureExtent":%s,' "$(json_string "$CONFIG_CAPTURE_EXTENT")"
+  printf '"matchList":%s,' "$(json_string_array "$CONFIG_MATCH_LIST")"
+  printf '"blacklist":%s,' "$(json_string_array "$CONFIG_BLACKLIST")"
+  printf '"encoder":%s' "$(print_encoder_json)"
+}
+
+reset_config_defaults() {
+  CONFIG_MONITOR=""
+  CONFIG_SECONDS="$DEFAULT_SECONDS"
+  CONFIG_AUDIO="$DEFAULT_AUDIO"
+  CONFIG_MODE="$DEFAULT_MODE"
+  CONFIG_FILTER="$DEFAULT_FILTER"
+  CONFIG_CAPTURE_EXTENT="$DEFAULT_CAPTURE_EXTENT"
+  CONFIG_CODEC="$DEFAULT_CODEC"
+  CONFIG_FPS="$DEFAULT_FPS"
+  CONFIG_QUALITY="$DEFAULT_QUALITY"
+  CONFIG_CURSOR="$DEFAULT_CURSOR"
+  CONFIG_FRAMERATE_MODE="$DEFAULT_FRAMERATE_MODE"
+  CONFIG_BITRATE_MODE="$DEFAULT_BITRATE_MODE"
+  CONFIG_MATCH_LIST=""
+  CONFIG_BLACKLIST=""
+}
+
 config_value_safe() {
   [[ $1 != *$'\n'* && $1 != *$'\r'* ]]
 }
@@ -148,9 +230,7 @@ notify() {
 
 load_config() {
   local key value
-  CONFIG_MONITOR=""
-  CONFIG_SECONDS="$DEFAULT_SECONDS"
-  CONFIG_AUDIO="$DEFAULT_AUDIO"
+  reset_config_defaults
 
   [[ -r $CONFIG_FILE ]] || return 0
   while IFS='=' read -r key value || [[ -n ${key:-} ]]; do
@@ -163,9 +243,45 @@ load_config() {
     audio)
       [[ $value == none || $value == desktop || $value == both ]] && CONFIG_AUDIO="$value"
       ;;
+    mode)
+      [[ $value == monitor || $value == follow || $value == pin || $value == region ]] && CONFIG_MODE="$value"
+      ;;
+    filter)
+      [[ $value == all || $value == allowlist || $value == denylist ]] && CONFIG_FILTER="$value"
+      ;;
+    captureExtent)
+      [[ $value == monitor || $value == window ]] && CONFIG_CAPTURE_EXTENT="$value"
+      ;;
+    codec)
+      config_value_safe "$value" && [[ -n $value ]] && CONFIG_CODEC="$value"
+      ;;
+    fps)
+      [[ $value =~ ^[0-9]+$ ]] && CONFIG_FPS="$value"
+      ;;
+    quality)
+      [[ $value =~ ^[0-9]+$ ]] && CONFIG_QUALITY="$value"
+      ;;
+    cursor)
+      [[ $value == true || $value == false ]] && CONFIG_CURSOR="$value"
+      ;;
+    framerateMode)
+      [[ $value == cfr || $value == vfr ]] && CONFIG_FRAMERATE_MODE="$value"
+      ;;
+    bitrateMode)
+      [[ $value == cbr || $value == vbr ]] && CONFIG_BITRATE_MODE="$value"
+      ;;
+    matchList)
+      CONFIG_MATCH_LIST="${value//,/
+}"
+      ;;
+    blacklist)
+      CONFIG_BLACKLIST="${value//,/
+}"
+      ;;
     esac
   done < "$CONFIG_FILE"
   clamp_seconds
+  clamp_fps
 }
 
 clamp_seconds() {
@@ -176,17 +292,40 @@ clamp_seconds() {
   fi
 }
 
+clamp_fps() {
+  if (( CONFIG_FPS < MIN_FPS )); then
+    CONFIG_FPS=$MIN_FPS
+  elif (( CONFIG_FPS > MAX_FPS )); then
+    CONFIG_FPS=$MAX_FPS
+  fi
+}
+
 write_config() {
   config_value_safe "$CONFIG_MONITOR" || die "monitor value contains a newline"
+  config_value_safe "$CONFIG_CODEC" || die "codec value contains a newline"
   mkdir -p "$CONFIG_DIR"
   chmod 700 "$CONFIG_DIR" 2>/dev/null || true
   local tmp="$CONFIG_DIR/.config.$$"
+  local match_csv blacklist_csv
+  match_csv=${CONFIG_MATCH_LIST//$'\n'/,}
+  blacklist_csv=${CONFIG_BLACKLIST//$'\n'/,}
   (umask 077
     {
       printf '# omarchy-shadowplay configuration v1\n'
       printf 'monitor=%s\n' "$CONFIG_MONITOR"
       printf 'seconds=%s\n' "$CONFIG_SECONDS"
       printf 'audio=%s\n' "$CONFIG_AUDIO"
+      printf 'mode=%s\n' "$CONFIG_MODE"
+      printf 'filter=%s\n' "$CONFIG_FILTER"
+      printf 'captureExtent=%s\n' "$CONFIG_CAPTURE_EXTENT"
+      printf 'codec=%s\n' "$CONFIG_CODEC"
+      printf 'fps=%s\n' "$CONFIG_FPS"
+      printf 'quality=%s\n' "$CONFIG_QUALITY"
+      printf 'cursor=%s\n' "$CONFIG_CURSOR"
+      printf 'framerateMode=%s\n' "$CONFIG_FRAMERATE_MODE"
+      printf 'bitrateMode=%s\n' "$CONFIG_BITRATE_MODE"
+      printf 'matchList=%s\n' "$match_csv"
+      printf 'blacklist=%s\n' "$blacklist_csv"
     } > "$tmp"
   )
   mv -f "$tmp" "$CONFIG_FILE"
@@ -377,17 +516,20 @@ cmd_start() {
 
   local -a gsr_args=(
     -w "$monitor"
-    -f 60
-    -fm cfr
-    -k auto
-    -bm cbr
-    -q 40000
+    -f "$CONFIG_FPS"
+    -fm "$CONFIG_FRAMERATE_MODE"
+    -k "$CONFIG_CODEC"
+    -bm "$CONFIG_BITRATE_MODE"
+    -q "$CONFIG_QUALITY"
     -r "$seconds"
     -replay-storage ram
     -fallback-cpu-encoding yes
     -ipc "$IPC"
     -o "$dir"
   )
+  if [[ $CONFIG_CURSOR == false ]]; then
+    gsr_args+=(-cursor no)
+  fi
   case "$audio" in
   desktop) gsr_args+=(-a default_output -ac aac) ;;
   both) gsr_args+=(-a "default_output|default_input" -ac aac) ;;
@@ -471,7 +613,8 @@ print_status_json() {
   printf '"pid":%s,' "$(json_string_or_null "${5:-}")"
   printf '"ipc":%s,' "$(json_string "$IPC")"
   printf '"outputDir":%s,' "$(json_string "$(output_dir)")"
-  printf '"lastClip":%s' "$(json_string_or_null "${6:-}")"
+  printf '"lastClip":%s,' "$(json_string_or_null "${6:-}")"
+  print_settings_fields
   printf '}\n'
 }
 
@@ -550,13 +693,17 @@ cmd_settings_show() {
     printf '{'
     printf '"monitor":%s,' "$(json_string "$CONFIG_MONITOR")"
     printf '"seconds":%s,' "$CONFIG_SECONDS"
-    printf '"audio":%s' "$(json_string "$CONFIG_AUDIO")"
+    printf '"audio":%s,' "$(json_string "$CONFIG_AUDIO")"
+    print_settings_fields
     printf '}\n'
     return
   fi
   printf 'monitor=%s\n' "$CONFIG_MONITOR"
   printf 'seconds=%s\n' "$CONFIG_SECONDS"
   printf 'audio=%s\n' "$CONFIG_AUDIO"
+  printf 'mode=%s\n' "$CONFIG_MODE"
+  printf 'filter=%s\n' "$CONFIG_FILTER"
+  printf 'captureExtent=%s\n' "$CONFIG_CAPTURE_EXTENT"
 }
 
 cmd_settings_set() {
@@ -576,6 +723,45 @@ cmd_settings_set() {
   audio)
     [[ $value == none || $value == desktop || $value == both ]] || die "audio must be none, desktop, or both"
     CONFIG_AUDIO="$value"
+    ;;
+  mode)
+    [[ $value == monitor || $value == follow || $value == pin || $value == region ]] || die "mode must be monitor, follow, pin, or region"
+    CONFIG_MODE="$value"
+    ;;
+  filter)
+    [[ $value == all || $value == allowlist || $value == denylist ]] || die "filter must be all, allowlist, or denylist"
+    CONFIG_FILTER="$value"
+    ;;
+  captureExtent)
+    [[ $value == monitor || $value == window ]] || die "captureExtent must be monitor or window"
+    CONFIG_CAPTURE_EXTENT="$value"
+    ;;
+  codec)
+    [[ -n $value ]] || die "codec must not be empty"
+    config_value_safe "$value" || die "codec value contains a newline"
+    CONFIG_CODEC="$value"
+    ;;
+  fps)
+    [[ $value =~ ^[0-9]+$ ]] || die "fps must be an integer"
+    CONFIG_FPS="$value"
+    clamp_fps
+    [[ $CONFIG_FPS == "$value" ]] || die "fps must be between $MIN_FPS and $MAX_FPS"
+    ;;
+  quality)
+    [[ $value =~ ^[0-9]+$ ]] || die "quality must be an integer"
+    CONFIG_QUALITY="$value"
+    ;;
+  cursor)
+    [[ $value == true || $value == false ]] || die "cursor must be true or false"
+    CONFIG_CURSOR="$value"
+    ;;
+  framerateMode)
+    [[ $value == cfr || $value == vfr ]] || die "framerateMode must be cfr or vfr"
+    CONFIG_FRAMERATE_MODE="$value"
+    ;;
+  bitrateMode)
+    [[ $value == cbr || $value == vbr ]] || die "bitrateMode must be cbr or vbr"
+    CONFIG_BITRATE_MODE="$value"
     ;;
   *)
     die "unknown setting: $key"
