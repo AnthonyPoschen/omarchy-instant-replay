@@ -95,13 +95,14 @@ Usage:
   $PROGRAM save [seconds]
   $PROGRAM status [--json]
   $PROGRAM monitors [--json]
+  $PROGRAM windows [--json]
   $PROGRAM settings show [--json]
   $PROGRAM settings set monitor <name|>
   $PROGRAM settings set seconds <15-600>
   $PROGRAM settings set audio <none|desktop|both>
   $PROGRAM settings set mode <monitor|follow|pin|region>
   $PROGRAM settings set filter <all|allowlist|denylist>
-  $PROGRAM settings set matchList <csv>
+  $PROGRAM settings set matchList <class,regex,...>
   $PROGRAM settings set blacklist <csv>
   $PROGRAM settings set captureExtent <monitor|window>
   $PROGRAM settings set codec <name>
@@ -183,6 +184,21 @@ json_string_array() {
     done <<<"$1"
   fi
   printf ']'
+}
+
+csv_to_lines() {
+  local csv="${1:-}" item out=""
+  [[ -n $csv ]] || return 0
+  while IFS= read -r item; do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    [[ -n $item ]] || continue
+    if [[ -n $out ]]; then
+      out+=$'\n'
+    fi
+    out+="$item"
+  done <<< "${csv//,/$'\n'}"
+  printf '%s' "$out"
 }
 
 print_encoder_json() {
@@ -293,8 +309,7 @@ load_config() {
       [[ $value == cbr || $value == vbr ]] && CONFIG_BITRATE_MODE="$value"
       ;;
     matchList)
-      CONFIG_MATCH_LIST="${value//,/
-}"
+      CONFIG_MATCH_LIST="$(csv_to_lines "$value")"
       ;;
     blacklist)
       CONFIG_BLACKLIST="${value//,/
@@ -1111,31 +1126,40 @@ is_sticky_glance_class() {
   return 1
 }
 
-class_matches_rules() {
-  local class="$1" rules="$2"
-  local rule
-  [[ -n $rules ]] || return 1
-  while IFS= read -r rule; do
-    [[ -n $rule ]] || continue
-    [[ $class =~ $rule ]] && return 0
-  done <<<"$rules"
+rule_matches_class() {
+  local rule="$1" class="$2" initial="$3"
+  [[ -n $rule ]] || return 1
+  [[ $class =~ $rule ]] && return 0
+  [[ -n $initial && $initial != "$class" && $initial =~ $rule ]] && return 0
   return 1
 }
 
 window_allowed() {
-  local class="$1"
-  [[ -n $class ]] || return 1
+  local class="$1" initial="${2:-$1}"
+  [[ -n $class || -n $initial ]] || return 1
   case "$CONFIG_FILTER" in
   allowlist)
-    class_matches_rules "$class" "$CONFIG_MATCH_LIST"
+    local rule
+    [[ -n $CONFIG_MATCH_LIST ]] || return 1
+    while IFS= read -r rule; do
+      [[ -n $rule ]] || continue
+      rule_matches_class "$rule" "$class" "$initial" && return 0
+    done <<<"$CONFIG_MATCH_LIST"
+    return 1
     ;;
   denylist)
-    class_matches_rules "$class" "$CONFIG_BLACKLIST" && return 1
+    local rule
+    while IFS= read -r rule; do
+      [[ -n $rule ]] || continue
+      rule_matches_class "$rule" "$class" "$initial" && return 1
+    done <<<"$CONFIG_BLACKLIST"
     return 0
     ;;
   all)
     is_chrome_class "$class" && return 1
+    is_chrome_class "$initial" && return 1
     is_sticky_glance_class "$class" && return 1
+    is_sticky_glance_class "$initial" && return 1
     return 0
     ;;
   *)
@@ -1143,6 +1167,23 @@ window_allowed() {
     return 0
     ;;
   esac
+}
+
+match_list_priority_line() {
+  local rule line klass initial mon addr focused
+  [[ -n $CONFIG_MATCH_LIST ]] || return 1
+  while IFS= read -r rule; do
+    [[ -n $rule ]] || continue
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      IFS='|' read -r klass initial mon addr focused _ <<<"$line"
+      if rule_matches_class "$rule" "$klass" "$initial"; then
+        printf '%s\n' "$line"
+        return 0
+      fi
+    done < <(parse_windows)
+  done <<<"$CONFIG_MATCH_LIST"
+  return 1
 }
 
 parse_windows() {
@@ -1198,22 +1239,24 @@ for item in clients:
         focused = True
     if focus and address == focus:
         focused = True
-    rows.append((klass, initial, monitor, address, focused, hist if isinstance(hist, int) else 10**9))
+    title = str(item.get("title") or item.get("initialTitle") or "")
+    rows.append((klass, initial, monitor, address, focused, hist if isinstance(hist, int) else 10**9, title))
 if not any(r[4] for r in rows):
     with_hist = [r for r in rows if r[5] != 10**9]
     if with_hist:
         winner = min(with_hist, key=lambda r: r[5])
         rows = [r[:4] + (r is winner,) + r[5:] for r in rows]
-for klass, initial, monitor, address, focused, _hist in rows:
-    print("|".join([klass.replace("|"," "), initial.replace("|"," "), monitor.replace("|"," "), address.replace("|"," "), "1" if focused else "0"]))
+for klass, initial, monitor, address, focused, _hist, title in rows:
+    print("|".join([klass.replace("|"," "), initial.replace("|"," "), monitor.replace("|"," "), address.replace("|"," "), "1" if focused else "0", title.replace("|"," ")]))
 '
 }
 
 focused_window_line() {
-  local line
+  local line klass initial mon addr focused
   while IFS= read -r line; do
     [[ -n $line ]] || continue
-    if [[ $line == *"|1" ]]; then
+    IFS='|' read -r klass initial mon addr focused _ <<<"$line"
+    if [[ $focused == 1 ]]; then
       printf '%s\n' "$line"
       return 0
     fi
@@ -1226,7 +1269,7 @@ window_exists() {
   local line klass mon addr
   while IFS= read -r line; do
     [[ -n $line ]] || continue
-    IFS='|' read -r klass _ mon addr _ <<<"$line"
+    IFS='|' read -r klass _ mon addr _ _ <<<"$line"
     if [[ -n $address && $addr == "$address" ]]; then
       return 0
     fi
@@ -1242,7 +1285,7 @@ find_class_on_monitor() {
   local line klass mon addr
   while IFS= read -r line; do
     [[ -n $line ]] || continue
-    IFS='|' read -r klass _ mon addr _ <<<"$line"
+    IFS='|' read -r klass _ mon addr _ _ <<<"$line"
     if [[ $klass == "$class" && $mon == "$monitor" ]]; then
       printf '%s\n' "$line"
       return 0
@@ -1301,43 +1344,58 @@ cmd_follow_tick() {
   local line class initial win_mon win_addr focused
   line=$(focused_window_line || true)
   if [[ -n $line ]]; then
-    IFS='|' read -r class initial win_mon win_addr focused <<<"$line"
+    IFS='|' read -r class initial win_mon win_addr focused _ <<<"$line"
   else
     class=""
+    initial=""
     win_mon=""
     win_addr=""
   fi
 
-  local subject_alive="false"
+  local subject_alive="false" subject_initial=""
+  subject_initial="$subject_class"
   if [[ -n $subject_address ]] && window_exists "$subject_address" "$subject_class" ""; then
     subject_alive="true"
   elif [[ -n $subject_class ]] && window_exists "" "$subject_class" "$monitor"; then
     subject_alive="true"
   fi
 
-  if [[ -n $class ]] && window_allowed "$class"; then
-    if [[ $phase == linger && $class == "$subject_class" && $win_mon == "$monitor" ]]; then
-      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$win_addr" "-"
+  adopt_follow_subject() {
+    local tgt_mon="$1" tgt_class="$2" tgt_addr="$3"
+    if [[ $phase == linger && $tgt_class == "$subject_class" && $tgt_mon == "$monitor" ]]; then
+      write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$tgt_class" "$tgt_addr" "-"
       return 0
     fi
     if [[ $phase == live || $phase == linger ]]; then
-      if [[ $win_mon == "$monitor" ]]; then
-        write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$win_addr" "-"
+      if [[ $tgt_mon == "$monitor" ]]; then
+        write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$tgt_class" "$tgt_addr" "-"
         return 0
       fi
-      go_live_on "$win_mon" "$class" "$win_addr"
-      return 0
     fi
-    go_live_on "$win_mon" "$class" "$win_addr"
+    go_live_on "$tgt_mon" "$tgt_class" "$tgt_addr"
+  }
+
+  if [[ -n $class ]] && window_allowed "$class" "$initial"; then
+    adopt_follow_subject "$win_mon" "$class" "$win_addr"
     return 0
   fi
 
-  # Chrome / not allowed: Sticky while subject lives.
-  if [[ $subject_alive == true ]]; then
+  # Glance at a non-match: Sticky while the last Subject still matches.
+  if [[ $subject_alive == true ]] && window_allowed "$subject_class" "$subject_initial"; then
     if [[ $phase == linger ]]; then
       write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$subject_class" "$subject_address" "-"
     fi
     return 0
+  fi
+
+  if [[ $CONFIG_FILTER == allowlist ]]; then
+    local prio
+    prio=$(match_list_priority_line || true)
+    if [[ -n $prio ]]; then
+      IFS='|' read -r class initial win_mon win_addr focused _ <<<"$prio"
+      adopt_follow_subject "$win_mon" "$class" "$win_addr"
+      return 0
+    fi
   fi
 
   if [[ $phase == live ]]; then
@@ -1519,6 +1577,73 @@ cmd_monitors() {
   done < <(list_monitor_lines)
 }
 
+cmd_windows() {
+  load_config
+  local clients monitors names
+  clients=$(windows_json)
+  monitors=$(monitors_json)
+  names=$(list_monitor_names)
+  SHADOWPLAY_CLIENTS_JSON="$clients" SHADOWPLAY_MONITORS_JSON="$monitors" SHADOWPLAY_MONITOR_NAMES="$names" python3 -c '
+import json, os
+def load(raw):
+    try:
+        data = json.loads(raw or "[]")
+    except Exception:
+        return []
+    if isinstance(data, dict):
+        return [data]
+    return data if isinstance(data, list) else []
+clients = load(os.environ.get("SHADOWPLAY_CLIENTS_JSON", "[]"))
+monitors = load(os.environ.get("SHADOWPLAY_MONITORS_JSON", "[]"))
+id_to_name = {}
+gsr_names = [n for n in os.environ.get("SHADOWPLAY_MONITOR_NAMES", "").splitlines() if n]
+for i, name in enumerate(gsr_names):
+    id_to_name[str(i)] = name
+    id_to_name[name] = name
+for mon in monitors:
+    if not isinstance(mon, dict):
+        continue
+    name = str(mon.get("name") or "")
+    mid = mon.get("id")
+    if name:
+        id_to_name[name] = name
+    if name and mid is not None:
+        id_to_name[str(mid)] = name
+focus = os.environ.get("SHADOWPLAY_FOCUSED_ADDRESS", "")
+rows = []
+best = None
+for item in clients:
+    if not isinstance(item, dict):
+        continue
+    klass = str(item.get("class") or item.get("initialClass") or "")
+    initial = str(item.get("initialClass") or klass)
+    title = str(item.get("title") or item.get("initialTitle") or "")
+    raw_mon = item.get("monitor")
+    monitor = ""
+    if raw_mon is not None and raw_mon != "":
+        key = str(raw_mon)
+        monitor = id_to_name.get(key, key if not str(raw_mon).isdigit() else "")
+    address = str(item.get("address") or "")
+    hist = item.get("focusHistoryID")
+    focused = item.get("focused") is True or item.get("active") is True
+    if hist == 0:
+        focused = True
+    if focus and address == focus:
+        focused = True
+    hist_n = hist if isinstance(hist, int) else 10**9
+    rows.append({"class": klass, "initialClass": initial, "title": title, "monitor": monitor, "address": address, "focused": focused, "_hist": hist_n})
+if rows and not any(r["focused"] for r in rows):
+    winner = min(rows, key=lambda r: r["_hist"])
+    for r in rows:
+        r["focused"] = r is winner
+out = []
+for r in rows:
+    r.pop("_hist", None)
+    out.append(r)
+print(json.dumps(out))
+'
+}
+
 cmd_settings_show() {
   load_config
   if [[ ${1:-} == --json ]]; then
@@ -1537,6 +1662,7 @@ cmd_settings_show() {
   printf 'audio=%s\n' "$CONFIG_AUDIO"
   printf 'mode=%s\n' "$CONFIG_MODE"
   printf 'filter=%s\n' "$CONFIG_FILTER"
+  printf 'matchList=%s\n' "${CONFIG_MATCH_LIST//$'\n'/,}"
   printf 'captureExtent=%s\n' "$CONFIG_CAPTURE_EXTENT"
   printf 'outputDir=%s\n' "$CONFIG_OUTPUT_DIR"
   printf 'region=%s\n' "$CONFIG_REGION"
@@ -1568,6 +1694,9 @@ cmd_settings_set() {
   filter)
     [[ $value == all || $value == allowlist || $value == denylist ]] || die "filter must be all, allowlist, or denylist"
     CONFIG_FILTER="$value"
+    ;;
+  matchList)
+    CONFIG_MATCH_LIST="$(csv_to_lines "$value")"
     ;;
   captureExtent)
     [[ $value == monitor || $value == window ]] || die "captureExtent must be monitor or window"
@@ -1647,7 +1776,7 @@ cmd_settings_set() {
   elif [[ $CONFIG_MODE == follow ]] && follow_session_active; then
     local monitor
     monitor=$(activity_value monitor)
-    if buffer_running && [[ -n $monitor ]] && live_capture_differs "$monitor"; then
+    if [[ $key != matchList && $key != filter ]] && buffer_running && [[ -n $monitor ]] && live_capture_differs "$monitor"; then
       local saved="$CONFIG_MONITOR"
       CONFIG_MONITOR="$monitor"
       split_and_restart
@@ -1732,6 +1861,7 @@ main() {
   save) shift; cmd_save "${1:-}" ;;
   status) shift; cmd_status "${1:-}" ;;
   monitors) shift; cmd_monitors "${1:-}" ;;
+  windows) shift; cmd_windows "${1:-}" ;;
   settings)
     shift
     case "${1:-}" in

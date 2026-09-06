@@ -16,6 +16,7 @@ Panel {
   property string helperPath: ""
   property var status: ({ running: false, monitor: "", seconds: 60, audio: "desktop", lastClip: "", phase: "off", armed: false, linger: false, subject: "" })
   property var monitors: []
+  property var windows: []
   property bool busy: false
   property bool autostartAttempted: false
   property string lastError: ""
@@ -46,6 +47,8 @@ Panel {
   readonly property var secondsChoices: Model.secondsOptions()
   readonly property var audioChoices: Model.audioOptions()
   readonly property var filterChoices: Model.filterOptions()
+  readonly property var configuredMatchList: Model.stringList(setting("matchList", []))
+  readonly property string configuredFilter: Model.normalizeFilter(setting("filter", "all"))
   readonly property string configuredCodec: Model.normalizeCodec(setting("codec", "auto"))
   readonly property int configuredFps: Model.boundedInteger(setting("fps", 60), 60, Model.minFps(), Model.maxFps())
   readonly property int configuredQuality: Model.boundedInteger(setting("quality", 40000), 40000, Model.minQuality(), Model.maxQuality())
@@ -57,7 +60,6 @@ Panel {
   readonly property var qualityChoices: Model.qualityOptions()
   readonly property var framerateModeChoices: Model.framerateModeOptions()
   readonly property var bitrateModeChoices: Model.bitrateModeOptions()
-  readonly property string configuredFilter: Model.normalizeFilter(setting("filter", "all"))
   readonly property var configuredBlacklist: {
     var stored = setting("blacklist", undefined)
     if (stored !== undefined && stored !== null)
@@ -118,6 +120,93 @@ Panel {
     actionProc.running = true
   }
 
+  function joinMatchList(list) {
+    var out = []
+    for (var i = 0; i < list.length; i++) {
+      var item = String(list[i] || "").trim()
+      if (item) out.push(item)
+    }
+    return out.join(",")
+  }
+
+  function applyMatchList(list) {
+    var cleaned = []
+    for (var i = 0; i < list.length; i++) {
+      var item = String(list[i] || "").trim()
+      if (item) cleaned.push(item)
+    }
+    root.persistSettings({ matchList: cleaned })
+    if (root.helperPath === "" || actionProc.running) return
+    root.busy = true
+    root.lastError = ""
+    actionProc.command = root.runHelper(["settings", "set", "matchList", root.joinMatchList(cleaned)])
+    actionProc.running = true
+  }
+
+  function addMatchClass(klass) {
+    var rule = String(klass || "").trim()
+    if (rule === "") return
+    var list = root.configuredMatchList.slice()
+    for (var i = 0; i < list.length; i++) if (list[i] === rule) return
+    list.push(rule)
+    root.applyMatchList(list)
+  }
+
+  function addFocusedMatch() {
+    for (var i = 0; i < root.windows.length; i++) {
+      if (root.windows[i].focused === true) {
+        root.addMatchClass(root.windows[i].className || root.windows[i].initialClass)
+        return
+      }
+    }
+  }
+
+  function removeMatchAt(index) {
+    var list = root.configuredMatchList.slice()
+    if (index < 0 || index >= list.length) return
+    list.splice(index, 1)
+    root.applyMatchList(list)
+  }
+
+  function moveMatch(index, delta) {
+    var list = root.configuredMatchList.slice()
+    var next = index + delta
+    if (index < 0 || next < 0 || index >= list.length || next >= list.length) return
+    var tmp = list[index]
+    list[index] = list[next]
+    list[next] = tmp
+    root.applyMatchList(list)
+  }
+
+  function updateMatchAt(index, value) {
+    var list = root.configuredMatchList.slice()
+    if (index < 0 || index >= list.length) return
+    var rule = String(value || "").trim()
+    if (rule === "") list.splice(index, 1)
+    else list[index] = rule
+    root.applyMatchList(list)
+  }
+
+  function windowLabel(win) {
+    if (!win) return "window"
+    var title = String(win.title || "").trim()
+    if (title) return title
+    return String(win.className || win.initialClass || "window")
+  }
+
+  function titleForRule(rule) {
+    var needle = String(rule || "")
+    if (needle === "") return ""
+    for (var i = 0; i < root.windows.length; i++) {
+      var win = root.windows[i]
+      if (win.className === needle || win.initialClass === needle) {
+        var title = String(win.title || "").trim()
+        if (title && title !== needle) return title
+      }
+    }
+    return ""
+  }
+
   function runHelper(args) {
     var command = ["bash", root.helperPath]
     for (var i = 0; i < args.length; i++) command.push(args[i])
@@ -129,6 +218,10 @@ Panel {
     if (!monitorsProc.running) {
       monitorsProc.command = root.runHelper(["monitors", "--json"])
       monitorsProc.running = true
+    }
+    if (!windowsProc.running) {
+      windowsProc.command = root.runHelper(["windows", "--json"])
+      windowsProc.running = true
     }
     if (statusProc.running) return
     statusProc.command = root.runHelper(["status", "--json"])
@@ -246,6 +339,16 @@ Panel {
     onExited: function(exitCode) {
       Qt.callLater(function() {
         if (exitCode === 0) root.monitors = Model.parseMonitors(monitorsOutput.text)
+      })
+    }
+  }
+
+  Process {
+    id: windowsProc
+    stdout: StdioCollector { id: windowsOutput; waitForEnd: true }
+    onExited: function(exitCode) {
+      Qt.callLater(function() {
+        if (exitCode === 0) root.windows = Model.parseWindows(windowsOutput.text)
       })
     }
   }
@@ -392,7 +495,7 @@ Panel {
           width: parent.width
           visible: root.configuredMode === "follow"
           label: "Filter"
-          value: Model.normalizeFilter(setting("filter", "all"))
+          value: root.configuredFilter
           options: root.filterChoices
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
@@ -490,6 +593,115 @@ Panel {
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
             onClicked: root.applyBlacklist([])
+          }
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(6)
+          visible: root.configuredMode === "follow" && root.configuredFilter === "allowlist"
+          height: visible ? implicitHeight : 0
+
+          Text {
+            text: "Match List"
+            color: Qt.darker(root.contentForeground, 1.4)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+
+          Repeater {
+            model: root.configuredMatchList
+            delegate: Column {
+              width: parent.width
+              spacing: Style.space(2)
+
+              Text {
+                width: parent.width
+                visible: root.titleForRule(modelData) !== ""
+                height: visible ? implicitHeight : 0
+                text: root.titleForRule(modelData)
+                elide: Text.ElideRight
+                color: Qt.darker(root.contentForeground, 1.4)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Row {
+                width: parent.width
+                spacing: Style.space(6)
+
+                TextField {
+                  id: matchField
+                  width: parent.width - upBtn.width - downBtn.width - removeBtn.width - parent.spacing * 3
+                  text: modelData
+                  placeholderText: "class or regex"
+                  foreground: root.contentForeground
+                  onEditingFinished: {
+                    if (text === modelData) return
+                    root.updateMatchAt(index, text)
+                  }
+                }
+
+                Button {
+                  id: upBtn
+                  text: "↑"
+                  enabled: !root.busy && index > 0
+                  foreground: root.contentForeground
+                  fontFamily: root.contentFontFamily
+                  onClicked: root.moveMatch(index, -1)
+                }
+
+                Button {
+                  id: downBtn
+                  text: "↓"
+                  enabled: !root.busy && index < root.configuredMatchList.length - 1
+                  foreground: root.contentForeground
+                  fontFamily: root.contentFontFamily
+                  onClicked: root.moveMatch(index, 1)
+                }
+
+                Button {
+                  id: removeBtn
+                  text: "×"
+                  enabled: !root.busy
+                  foreground: root.contentForeground
+                  fontFamily: root.contentFontFamily
+                  onClicked: root.removeMatchAt(index)
+                }
+              }
+            }
+          }
+
+          Button {
+            width: parent.width
+            text: "Add focused"
+            enabled: !root.busy
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.addFocusedMatch()
+          }
+
+          Text {
+            visible: root.windows.length > 0
+            height: visible ? implicitHeight : 0
+            text: "Open windows"
+            color: Qt.darker(root.contentForeground, 1.4)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+
+          Repeater {
+            model: root.windows
+            delegate: Button {
+              width: parent.width
+              text: root.windowLabel(modelData)
+              enabled: !root.busy
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: root.addMatchClass(modelData.className || modelData.initialClass)
+            }
           }
         }
 
