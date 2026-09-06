@@ -24,7 +24,7 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property bool running: status.running === true
   readonly property string configuredMonitor: String(setting("monitor", "") || "")
-  readonly property int configuredSeconds: Model.boundedInteger(setting("seconds", 60), 60, 15, 600)
+  readonly property int configuredSeconds: Model.boundedInteger(setting("seconds", 60), 60, Model.minSeconds(), Model.maxSeconds())
   readonly property string configuredAudio: Model.normalizeAudio(setting("audio", "desktop"))
   readonly property bool configuredAutostart: setting("autostart", false) === true || String(setting("autostart", false)) === "true"
   readonly property color contentForeground: root.bar ? root.bar.foreground : Color.foreground
@@ -260,7 +260,7 @@ Panel {
           options: root.secondsChoices
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
-          onChanged: function(value) { root.applySetting("seconds", Model.boundedInteger(value, 60, 15, 600)) }
+          onChanged: function(value) { root.applySetting("seconds", Model.boundedInteger(value, 60, Model.minSeconds(), Model.maxSeconds())) }
         }
 
         Dropdown {

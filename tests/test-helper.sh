@@ -61,6 +61,8 @@ assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-w"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "DP-1"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-r"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "60"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-c"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "mp4"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-a"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "default_output"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-ipc"
@@ -119,6 +121,15 @@ echo "$settings" | jq -e '.mode == "monitor" and .filter == "all" and .captureEx
   || fail "settings json defaults: $settings"
 echo "$settings" | jq -e '.encoder.codec == "auto" and .encoder.fps == 60' >/dev/null \
   || fail "settings json encoder: $settings"
+
+"$helper" settings set seconds 7200 >/dev/null
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e '.seconds == 7200' >/dev/null || fail "2 hour replay window rejected: $settings"
+if "$helper" settings set seconds 7201 >/dev/null 2>"$work/sec-err"; then
+  fail "seconds above 2 hours was accepted"
+fi
+grep -q 'between' "$work/sec-err" || fail "over-max seconds error was unclear: $(<"$work/sec-err")"
+"$helper" settings set seconds 60 >/dev/null
 
 # v0.1 config without the new keys still starts one monitor replay buffer.
 "$helper" stop >/dev/null 2>&1 || true

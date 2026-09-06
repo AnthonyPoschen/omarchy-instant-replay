@@ -24,7 +24,7 @@ function parseStatus(text) {
     running: status.running === true,
     monitor: String(status.monitor || ""),
     configuredMonitor: String(status.configuredMonitor || ""),
-    seconds: boundedInteger(status.seconds, 60, 15, 600),
+    seconds: boundedInteger(status.seconds, 60, minSeconds(), maxSeconds()),
     audio: normalizeAudio(status.audio),
     pid: String(status.pid || ""),
     ipc: String(status.ipc || ""),
@@ -108,15 +108,42 @@ function monitorOptions(monitors) {
   return options
 }
 
+function minSeconds() { return 15 }
+function maxSeconds() { return 7200 }
+
 function secondsOptions() {
   return [
     { value: "15", label: "15 seconds" },
     { value: "30", label: "30 seconds" },
+    { value: "45", label: "45 seconds" },
     { value: "60", label: "1 minute" },
     { value: "120", label: "2 minutes" },
+    { value: "180", label: "3 minutes" },
     { value: "300", label: "5 minutes" },
-    { value: "600", label: "10 minutes" }
+    { value: "600", label: "10 minutes" },
+    { value: "900", label: "15 minutes" },
+    { value: "1200", label: "20 minutes" },
+    { value: "1800", label: "30 minutes" },
+    { value: "2700", label: "45 minutes" },
+    { value: "3600", label: "1 hour" },
+    { value: "5400", label: "90 minutes" },
+    { value: "7200", label: "2 hours" }
   ]
+}
+
+function formatReplayLength(seconds) {
+  var n = boundedInteger(seconds, 60, minSeconds(), maxSeconds())
+  var options = secondsOptions()
+  for (var i = 0; i < options.length; i++) {
+    if (parseInt(options[i].value, 10) === n) return options[i].label
+  }
+  if (n < 60) return n + " seconds"
+  if (n % 3600 === 0) {
+    var hours = n / 3600
+    return hours === 1 ? "1 hour" : hours + " hours"
+  }
+  if (n % 60 === 0) return (n / 60) + " minutes"
+  return n + " seconds"
 }
 
 function audioOptions() {
@@ -130,5 +157,5 @@ function audioOptions() {
 function statusLabel(status) {
   if (!status || status.running !== true) return "Buffer off"
   var monitor = status.monitor || "monitor"
-  return monitor + " · last " + status.seconds + "s"
+  return monitor + " · last " + formatReplayLength(status.seconds)
 }

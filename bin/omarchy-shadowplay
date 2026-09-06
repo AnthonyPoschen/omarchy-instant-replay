@@ -34,7 +34,7 @@ DEFAULT_CURSOR="true"
 DEFAULT_FRAMERATE_MODE="cfr"
 DEFAULT_BITRATE_MODE="cbr"
 MIN_SECONDS=15
-MAX_SECONDS=600
+MAX_SECONDS=7200
 MIN_FPS=1
 MAX_FPS=240
 
@@ -699,6 +699,7 @@ launch_recorder() {
     -bm "$CONFIG_BITRATE_MODE"
     -q "$CONFIG_QUALITY"
     -r "$seconds"
+    -c mp4
     -replay-storage ram
     -fallback-cpu-encoding yes
     -ipc "$IPC"

@@ -35,7 +35,7 @@
         "type": "integer",
         "label": "Replay length (seconds)",
         "min": 15,
-        "max": 600,
+        "max": 7200,
         "step": 15,
         "defaultValue": 60
       },
