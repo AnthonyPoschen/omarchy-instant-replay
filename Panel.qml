@@ -25,6 +25,7 @@ Panel {
   property bool extrasListsOpen: false
   property bool extrasHotkeysOpen: false
   property string hotkeyCopyStatus: ""
+  property string clipCopyStatus: ""
 
   readonly property var barIdentity: hostWidget || root
   readonly property bool running: status.running === true
@@ -32,6 +33,7 @@ Panel {
   readonly property int configuredSeconds: Model.boundedInteger(setting("seconds", 60), 60, Model.minSeconds(), Model.maxSeconds())
   readonly property string configuredAudio: Model.normalizeAudio(setting("audio", "desktop"))
   readonly property bool configuredAutostart: setting("autostart", false) === true || String(setting("autostart", false)) === "true"
+  readonly property string configuredOutputDir: String(setting("outputDir", "") || "")
   readonly property string configuredMode: Model.normalizeMode(setting("mode", "monitor"))
   readonly property color contentForeground: root.bar ? root.bar.foreground : Color.foreground
   readonly property string contentFontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -134,6 +136,13 @@ Panel {
     root.hotkeyCopyStatus = "Copied lua binds"
   }
 
+  function copyLastClip() {
+    var text = String(root.status.lastClip || "")
+    if (text === "") return
+    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(text) + " | wl-copy"])
+    root.clipCopyStatus = "Copied"
+  }
+
   function maybeAutostart() {
     if (root.autostartAttempted || root.helperPath === "") return
     root.autostartAttempted = true
@@ -225,17 +234,58 @@ Panel {
 
         PanelHero {
           title: "ShadowPlay"
-          meta: Model.statusLabel(root.status)
-          detail: root.lastError !== "" ? root.lastError : (root.status.lastClip !== "" ? root.status.lastClip : "Save the last seconds of the selected monitor.")
+          meta: root.running ? "Buffer on" : "Buffer off"
+          detail: ""
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
-          trailingControl: Component {
-            ToggleSwitch {
-              checked: root.running
-              busy: root.busy
-              foreground: root.contentForeground
-              onToggled: root.running ? root.stopBuffer() : root.startBuffer()
-            }
+        }
+
+        Text {
+          width: parent.width
+          visible: root.lastError !== ""
+          text: root.lastError
+          wrapMode: Text.Wrap
+          color: Color.urgent
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.body
+        }
+
+        Toggle {
+          width: parent.width
+          label: "Replay buffer"
+          description: root.running ? "Live on this monitor. Left-click the bar icon to save." : "Off. Start to keep the last Replay Window."
+          checked: root.running
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          onClicked: {
+            if (root.busy) return
+            root.running ? root.stopBuffer() : root.startBuffer()
+          }
+        }
+
+        Row {
+          width: parent.width
+          spacing: Style.space(8)
+          visible: String(root.status.lastClip || "") !== ""
+
+          Text {
+            width: parent.width - copyClipButton.width - parent.spacing
+            text: root.status.lastClip
+            elide: Text.ElideMiddle
+            color: Qt.darker(root.contentForeground, 1.3)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            verticalAlignment: Text.AlignVCenter
+            height: copyClipButton.height
+          }
+
+          Button {
+            id: copyClipButton
+            text: root.clipCopyStatus !== "" ? root.clipCopyStatus : "Copy"
+            enabled: !root.busy
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.copyLastClip()
           }
         }
 
@@ -283,6 +333,26 @@ Panel {
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onChanged: function(value) { root.applySetting("audio", Model.normalizeAudio(value)) }
+        }
+
+        Text {
+          text: "Clips folder"
+          color: Qt.darker(root.contentForeground, 1.4)
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+
+        TextField {
+          id: outputDirField
+          width: parent.width
+          text: root.configuredOutputDir
+          placeholderText: root.status.outputDir !== "" ? root.status.outputDir : "Videos/Replays"
+          foreground: root.contentForeground
+          onEditingFinished: {
+            if (root.configuredOutputDir === text) return
+            root.applySetting("outputDir", text)
+          }
         }
 
         Toggle {
@@ -363,19 +433,21 @@ Panel {
       Row {
         id: extraHeader
         width: parent.width
-        spacing: Style.space(8)
+        spacing: Style.space(10)
 
         Text {
-          text: extra.open ? "▾" : "▸"
+          text: extra.open ? "▼" : "▶"
           color: extra.foreground
           font.family: extra.fontFamily
-          font.pixelSize: Style.font.caption
+          font.pixelSize: Style.font.heading
+          font.bold: true
         }
 
         PanelSectionHeader {
-          text: extra.title
+          text: extra.title + (extra.open ? "  ·  Hide" : "  ·  Show")
           foreground: extra.foreground
           fontFamily: extra.fontFamily
+          fontSize: Style.font.body
         }
       }
     }

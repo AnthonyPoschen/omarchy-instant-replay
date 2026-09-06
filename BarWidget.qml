@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell.Io
+import qs.Commons
 import qs.Ui
 
 BarWidget {
@@ -72,7 +73,12 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: "󰑋"
-    opacity: root.running ? 1.0 : 0.48
+    active: root.running
+    useActiveColor: true
+    dimmed: !root.running
+    fontSize: Style.font.iconLarge
+    opticalSize: Style.bar.iconCanvas + 8
+    slotSize: Style.bar.iconSlot + 6
     tooltipText: root.running ? "Save replay" : "Start replay buffer"
 
     onPressed: function(buttonCode) {

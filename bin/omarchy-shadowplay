@@ -52,6 +52,7 @@ CONFIG_FRAMERATE_MODE="$DEFAULT_FRAMERATE_MODE"
 CONFIG_BITRATE_MODE="$DEFAULT_BITRATE_MODE"
 CONFIG_MATCH_LIST=""
 CONFIG_BLACKLIST=""
+CONFIG_OUTPUT_DIR=""
 
 runtime_base() {
   local candidate="${XDG_RUNTIME_DIR:-}"
@@ -210,6 +211,7 @@ reset_config_defaults() {
   CONFIG_BITRATE_MODE="$DEFAULT_BITRATE_MODE"
   CONFIG_MATCH_LIST=""
   CONFIG_BLACKLIST=""
+  CONFIG_OUTPUT_DIR=""
 }
 
 config_value_safe() {
@@ -287,6 +289,9 @@ load_config() {
       CONFIG_BLACKLIST="${value//,/
 }"
       ;;
+    outputDir)
+      config_value_safe "$value" && CONFIG_OUTPUT_DIR="$value"
+      ;;
     esac
   done < "$CONFIG_FILE"
   clamp_seconds
@@ -312,6 +317,7 @@ clamp_fps() {
 write_config() {
   config_value_safe "$CONFIG_MONITOR" || die "monitor value contains a newline"
   config_value_safe "$CONFIG_CODEC" || die "codec value contains a newline"
+  config_value_safe "$CONFIG_OUTPUT_DIR" || die "outputDir value contains a newline"
   mkdir -p "$CONFIG_DIR"
   chmod 700 "$CONFIG_DIR" 2>/dev/null || true
   local tmp="$CONFIG_DIR/.config.$$"
@@ -335,13 +341,28 @@ write_config() {
       printf 'bitrateMode=%s\n' "$CONFIG_BITRATE_MODE"
       printf 'matchList=%s\n' "$match_csv"
       printf 'blacklist=%s\n' "$blacklist_csv"
+      printf 'outputDir=%s\n' "$CONFIG_OUTPUT_DIR"
     } > "$tmp"
   )
   mv -f "$tmp" "$CONFIG_FILE"
 }
 
+expand_user_path() {
+  local dir="$1"
+  if [[ $dir == "~" ]]; then
+    printf '%s\n' "$HOME"
+  elif [[ $dir == "~/"* ]]; then
+    printf '%s\n' "$HOME/${dir#~/}"
+  else
+    printf '%s\n' "$dir"
+  fi
+}
+
 output_dir() {
   local dir="${SHADOWPLAY_OUTPUT_DIR:-}"
+  if [[ -z $dir && -n $CONFIG_OUTPUT_DIR ]]; then
+    dir=$(expand_user_path "$CONFIG_OUTPUT_DIR")
+  fi
   if [[ -z $dir ]]; then
     if [[ -n ${OMARCHY_SCREENRECORD_DIR:-} ]]; then
       dir="$OMARCHY_SCREENRECORD_DIR/Replays"
@@ -967,6 +988,7 @@ cmd_settings_show() {
     printf '"monitor":%s,' "$(json_string "$CONFIG_MONITOR")"
     printf '"seconds":%s,' "$CONFIG_SECONDS"
     printf '"audio":%s,' "$(json_string "$CONFIG_AUDIO")"
+    printf '"outputDir":%s,' "$(json_string "$CONFIG_OUTPUT_DIR")"
     print_settings_fields
     printf '}\n'
     return
@@ -977,6 +999,7 @@ cmd_settings_show() {
   printf 'mode=%s\n' "$CONFIG_MODE"
   printf 'filter=%s\n' "$CONFIG_FILTER"
   printf 'captureExtent=%s\n' "$CONFIG_CAPTURE_EXTENT"
+  printf 'outputDir=%s\n' "$CONFIG_OUTPUT_DIR"
 }
 
 cmd_settings_set() {
@@ -1035,6 +1058,13 @@ cmd_settings_set() {
   bitrateMode)
     [[ $value == cbr || $value == vbr ]] || die "bitrateMode must be cbr or vbr"
     CONFIG_BITRATE_MODE="$value"
+    ;;
+  outputDir)
+    config_value_safe "$value" || die "outputDir value contains a newline"
+    if [[ -n $value && $value != /* && $value != "~" && $value != "~/"* ]]; then
+      die "outputDir must be an absolute path"
+    fi
+    CONFIG_OUTPUT_DIR="$value"
     ;;
   *)
     die "unknown setting: $key"

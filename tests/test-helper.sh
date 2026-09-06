@@ -150,6 +150,21 @@ echo "$status" | jq -e '.mode == "monitor" and .running == true and .seconds == 
   || fail "omitted keys should still default Monitor Mode: $status"
 "$helper" stop
 
+"$helper" settings set outputDir "$work/custom-replays" >/dev/null
+settings=$("$helper" settings show --json)
+echo "$settings" | jq -e --arg d "$work/custom-replays" '.outputDir == $d' >/dev/null \
+  || fail "custom clips folder was not stored: $settings"
+if "$helper" settings set outputDir "relative/replays" >/dev/null 2>"$work/outdir-err"; then
+  fail "relative outputDir was accepted"
+fi
+export SHADOWPLAY_NOW=5000
+"$helper" start --monitor=DP-1 --seconds=60 --audio=desktop >/dev/null
+clip=$("$helper" save)
+[[ $clip == "$work/custom-replays/Replay-5000.mp4" ]] || fail "custom clips folder save was $clip"
+[[ -e $clip ]] || fail "custom clips folder Clip was not written"
+"$helper" settings set outputDir "" >/dev/null
+"$helper" stop
+
 # Busy KMS: a stock session recorder owns capture. Start must fail without signaling it.
 rm -f "$SHADOWPLAY_FAKE_DIR/session.killed" "$SHADOWPLAY_FAKE_DIR/running"
 setsid bash -c '

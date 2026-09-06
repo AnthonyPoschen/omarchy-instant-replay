@@ -20,7 +20,8 @@
       "monitor": "",
       "seconds": 60,
       "audio": "desktop",
-      "autostart": false
+      "autostart": false,
+      "outputDir": ""
     },
     "schema": [
       {
@@ -52,6 +53,13 @@
         "type": "boolean",
         "label": "Start buffer with the bar",
         "defaultValue": false
+      },
+      {
+        "key": "outputDir",
+        "type": "string",
+        "label": "Clips folder",
+        "description": "Where Save writes Clips. Empty uses Videos/Replays.",
+        "defaultValue": ""
       }
     ]
   }
