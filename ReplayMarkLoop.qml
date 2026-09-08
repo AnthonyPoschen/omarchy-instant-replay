@@ -51,8 +51,8 @@ Item {
       var py = cy + r * s
       var tx = -s
       var ty = c
-      var len = sw * 1.15
-      var hw = sw * 0.82
+      var len = sw * 2.3
+      var hw = sw * 1.65
 
       ctx.strokeStyle = ink
       ctx.fillStyle = ink
@@ -72,8 +72,8 @@ Item {
 
       ctx.beginPath()
       ctx.moveTo(px + tx * len, py + ty * len)
-      ctx.lineTo(px - tx * sw * 0.15 - ty * hw, py - ty * sw * 0.15 + tx * hw)
-      ctx.lineTo(px - tx * sw * 0.15 + ty * hw, py - ty * sw * 0.15 - tx * hw)
+      ctx.lineTo(px - tx * sw * 0.4 - ty * hw, py - ty * sw * 0.4 + tx * hw)
+      ctx.lineTo(px - tx * sw * 0.4 + ty * hw, py - ty * sw * 0.4 - tx * hw)
       ctx.closePath()
       ctx.fill()
     }
