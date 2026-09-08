@@ -120,7 +120,7 @@ BarWidget {
         height: disc.height
         text: "󰐊"
         fontFamily: button.fontFamily
-        fontSize: disc.width * 0.58
+        fontSize: disc.width * 0.78
         color: "#111111"
       }
     }
