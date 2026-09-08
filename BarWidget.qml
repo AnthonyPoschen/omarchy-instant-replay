@@ -74,7 +74,7 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     iconComponent: replayMark
-    // Restore the filled-triangle backup with ReplayMarkPlay.
+    // Loop backup: ReplayMarkLoop. Play backup: ReplayMarkPlay.
     active: root.running || root.savingCount > 0
     useActiveColor: false
     dimmed: !root.running && root.savingCount === 0
@@ -100,33 +100,10 @@ BarWidget {
 
   Component {
     id: replayMark
-    ReplayMarkLoop {
+    ReplayMarkRewind {
       anchors.fill: parent
       discColor: button.active ? button.activeColor : button.foreground
-    }
-  }
-
-  Rectangle {
-    visible: root.savingCount > 0
-    anchors.right: parent.right
-    anchors.bottom: parent.bottom
-    anchors.rightMargin: 1
-    anchors.bottomMargin: 1
-    width: Math.max(Style.space(14), badgeLabel.implicitWidth + Style.space(6))
-    height: Math.max(Style.space(14), badgeLabel.implicitHeight + Style.space(2))
-    radius: height / 2
-    color: Color.urgent
-    z: 1
-
-    Text {
-      id: badgeLabel
-      anchors.centerIn: parent
-      text: root.savingCount > 9 ? "9+" : String(root.savingCount)
-      textFormat: Text.PlainText
-      color: Color.background
-      font.family: Style.font.family
-      font.pixelSize: Style.font.caption
-      font.bold: true
+      saving: root.savingCount > 0
     }
   }
 }
