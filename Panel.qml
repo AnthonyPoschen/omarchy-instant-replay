@@ -228,6 +228,21 @@ Panel {
     root.clipCopyStatus = "Copied"
   }
 
+  function lastClipFolder() {
+    var path = String(root.status.lastClip || "")
+    var slash
+    if (path.charAt(0) !== "/" || path.indexOf("\n") !== -1) return ""
+    slash = path.lastIndexOf("/")
+    if (slash < 1) return ""
+    return path.slice(0, slash)
+  }
+
+  function openLastClipFolder() {
+    var dir = root.lastClipFolder()
+    if (dir === "") return
+    Quickshell.execDetached(["/usr/bin/xdg-open", "--", dir])
+  }
+
   function beginPick(args) {
     root.pickShouldReopen = true
     root.close()
@@ -460,30 +475,44 @@ Panel {
           }
         }
 
-        Row {
+        Column {
           width: parent.width
-          spacing: Style.space(8)
+          spacing: Style.space(6)
           visible: String(root.status.lastClip || "") !== ""
+          height: visible ? implicitHeight : 0
 
           Text {
-            width: parent.width - copyClipButton.width - parent.spacing
+            width: parent.width
             text: Model.plainLabel(root.status.lastClip, 256)
             textFormat: Text.PlainText
             elide: Text.ElideMiddle
             color: Qt.darker(root.contentForeground, 1.3)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
-            verticalAlignment: Text.AlignVCenter
-            height: copyClipButton.height
           }
 
-          Button {
-            id: copyClipButton
-            text: root.clipCopyStatus !== "" ? root.clipCopyStatus : "Copy"
-            enabled: !root.busy
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.copyLastClip()
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            Button {
+              id: copyClipButton
+              width: (parent.width - parent.spacing) / 2
+              text: root.clipCopyStatus !== "" ? root.clipCopyStatus : "Copy file"
+              enabled: !root.busy
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: root.copyLastClip()
+            }
+
+            Button {
+              width: (parent.width - parent.spacing) / 2
+              text: "Open folder"
+              enabled: !root.busy && root.lastClipFolder() !== ""
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: root.openLastClipFolder()
+            }
           }
         }
 
@@ -688,7 +717,7 @@ Panel {
 
           Button {
             id: browseFolderButton
-            text: "Browse"
+            text: "Choose"
             enabled: !folderPickProc.running
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
