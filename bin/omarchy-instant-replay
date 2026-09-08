@@ -18,11 +18,14 @@ SEGMENT_DIR="$STATE_DIR/segments"
 SEGMENT_INDEX="$SEGMENT_DIR/index"
 SAVE_JOBS_DIR="$STATE_DIR/save-jobs"
 
-GSR_BIN="${SHADOWPLAY_GSR_BIN:-gpu-screen-recorder}"
-GSR_CLI_BIN="${SHADOWPLAY_GSR_CLI_BIN:-gsr-cli}"
-FFMPEG_BIN="${SHADOWPLAY_FFMPEG_BIN:-ffmpeg}"
+GSR_BIN="${SHADOWPLAY_GSR_BIN:-/usr/bin/gpu-screen-recorder}"
+GSR_CLI_BIN="${SHADOWPLAY_GSR_CLI_BIN:-/usr/bin/gsr-cli}"
+FFMPEG_BIN="${SHADOWPLAY_FFMPEG_BIN:-/usr/bin/ffmpeg}"
 FOCUSED_MONITOR_BIN="${SHADOWPLAY_FOCUSED_MONITOR_BIN:-omarchy-hyprland-monitor-focused}"
-HYPRCTL_BIN="${SHADOWPLAY_HYPRCTL_BIN:-hyprctl}"
+HYPRCTL_BIN="${SHADOWPLAY_HYPRCTL_BIN:-/usr/bin/hyprctl}"
+PYTHON_BIN="${SHADOWPLAY_PYTHON_BIN:-/usr/bin/python3}"
+TIMEOUT_BIN="${SHADOWPLAY_TIMEOUT_BIN:-/usr/bin/timeout}"
+HEAD_BIN="${SHADOWPLAY_HEAD_BIN:-/usr/bin/head}"
 
 DEFAULT_SECONDS=60
 DEFAULT_AUDIO="desktop"
@@ -30,7 +33,8 @@ DEFAULT_MODE="monitor"
 DEFAULT_FILTER="all"
 DEFAULT_CAPTURE_EXTENT="monitor"
 # Filter=All still uses is_chrome_class even if the user empties this Denylist seed.
-DEFAULT_BLACKLIST=$'waybar\nwalker\nhyprlock'
+# org.quickshell is Omarchy 4's bar/menu/lock. The older names stay for leftover installs.
+DEFAULT_BLACKLIST=$'org.quickshell\nwaybar\nwalker\nhyprlock'
 DEFAULT_CODEC="auto"
 DEFAULT_FPS=60
 DEFAULT_QUALITY=40000
@@ -43,6 +47,12 @@ MIN_SECONDS=15
 MAX_SECONDS=7200
 MIN_FPS=1
 MAX_FPS=240
+MIN_QUALITY=1
+MAX_QUALITY=200000
+HYPR_JSON_MAX=1048576
+NOTIFY_TITLE_MAX=80
+NOTIFY_BODY_MAX=200
+FFMPEG_TIMEOUT=180
 
 CONFIG_MONITOR=""
 CONFIG_SECONDS="$DEFAULT_SECONDS"
@@ -65,25 +75,15 @@ CONFIG_REGION=""
 CONFIG_PIN_ADDRESS=""
 
 runtime_base() {
-  local candidate="${XDG_RUNTIME_DIR:-}"
-  if [[ -n $candidate && -d $candidate && -w $candidate && -O $candidate ]]; then
+  local candidate="${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}"
+  if [[ -L $candidate ]]; then
+    die "XDG_RUNTIME_DIR is a symbolic link: $candidate"
+  fi
+  if [[ -d $candidate && -w $candidate && -O $candidate ]]; then
     printf '%s\n' "$candidate"
     return
   fi
-
-  candidate="${TMPDIR:-/tmp}/omarchy-instant-replay-runtime-$(id -u)"
-  if [[ -L $candidate ]]; then
-    die "unsafe runtime path is a symbolic link: $candidate"
-  fi
-  if [[ -e $candidate && ! -d $candidate ]]; then
-    die "unsafe runtime path is not a directory: $candidate"
-  fi
-  if [[ -d $candidate && ! -O $candidate ]]; then
-    die "unsafe runtime path is owned by another user: $candidate"
-  fi
-  (umask 077; mkdir -p "$candidate")
-  chmod 700 "$candidate"
-  printf '%s\n' "$candidate"
+  die "XDG_RUNTIME_DIR is missing or not a writable directory owned by this user"
 }
 
 RUNTIME_BASE="$(runtime_base)"
@@ -112,7 +112,7 @@ Usage:
   $PROGRAM windows [--json]
   $PROGRAM settings show [--json]
   $PROGRAM settings set monitor <name|>
-  $PROGRAM settings set seconds <15-600>
+  $PROGRAM settings set seconds <15-7200>
   $PROGRAM settings set audio <none|desktop|both|window|window-mic>
   $PROGRAM settings set mode <monitor|follow|pin|region>
   $PROGRAM settings set filter <all|allowlist|denylist>
@@ -332,9 +332,23 @@ now_epoch() {
   printf '%s\n' "${SHADOWPLAY_NOW:-$(date +%s)}"
 }
 
+sanitize_notify_text() {
+  local s="$1" max="${2:-200}"
+  s=${s//</}
+  s=${s//>/}
+  s=${s//&/}
+  s=${s//$'\n'/ }
+  s=${s//$'\r'/}
+  if (( ${#s} > max )); then
+    s=${s:0:max}
+  fi
+  printf '%s' "$s"
+}
+
 notify() {
-  local title="$1"
-  local body="${2:-}"
+  local title body
+  title=$(sanitize_notify_text "$1" "$NOTIFY_TITLE_MAX")
+  body=$(sanitize_notify_text "${2:-}" "$NOTIFY_BODY_MAX")
   [[ ${SHADOWPLAY_NOTIFY:-true} == true ]] || return 0
   if command -v omarchy-notification-send >/dev/null 2>&1; then
     if [[ -n $body ]]; then
@@ -378,7 +392,9 @@ load_config() {
       fi
       ;;
     codec)
-      config_value_safe "$value" && [[ -n $value ]] && CONFIG_CODEC="$value"
+      if config_value_safe "$value" && [[ -n $value ]]; then
+        CONFIG_CODEC=$(normalize_codec "$value")
+      fi
       ;;
     fps)
       [[ $value =~ ^[0-9]+$ ]] && CONFIG_FPS="$value"
@@ -428,6 +444,7 @@ load_config() {
   fi
   clamp_seconds
   clamp_fps
+  clamp_quality
   if [[ $CONFIG_MODE == pin ]]; then
     CONFIG_CAPTURE_EXTENT=window
   fi
@@ -449,6 +466,25 @@ clamp_fps() {
   fi
 }
 
+clamp_quality() {
+  if ! [[ $CONFIG_QUALITY =~ ^[0-9]+$ ]]; then
+    CONFIG_QUALITY=$DEFAULT_QUALITY
+    return
+  fi
+  if (( CONFIG_QUALITY < MIN_QUALITY )); then
+    CONFIG_QUALITY=$MIN_QUALITY
+  elif (( CONFIG_QUALITY > MAX_QUALITY )); then
+    CONFIG_QUALITY=$MAX_QUALITY
+  fi
+}
+
+normalize_codec() {
+  case "${1:-}" in
+  auto|h264|hevc|av1|vp8|vp9) printf '%s' "$1" ;;
+  *) printf '%s' "$DEFAULT_CODEC" ;;
+  esac
+}
+
 write_config() {
   config_value_safe "$CONFIG_MONITOR" || die "monitor value contains a newline"
   config_value_safe "$CONFIG_CODEC" || die "codec value contains a newline"
@@ -457,7 +493,8 @@ write_config() {
   config_value_safe "$CONFIG_PIN_ADDRESS" || die "pinAddress value contains a newline"
   mkdir -p "$CONFIG_DIR"
   chmod 700 "$CONFIG_DIR" 2>/dev/null || true
-  local tmp="$CONFIG_DIR/.config.$$"
+  local tmp
+  tmp=$(mktemp "$CONFIG_DIR/.config.XXXXXX")
   local match_csv blacklist_csv
   match_csv=${CONFIG_MATCH_LIST//$'\n'/,}
   blacklist_csv=${CONFIG_BLACKLIST//$'\n'/,}
@@ -499,6 +536,23 @@ expand_user_path() {
   fi
 }
 
+xdg_videos_from_user_dirs() {
+  local file="$HOME/.config/user-dirs.dirs"
+  [[ -e $file && ! -L $file && -f $file ]] || return 1
+  local line value
+  while IFS= read -r line || [[ -n ${line:-} ]]; do
+    [[ $line == XDG_VIDEOS_DIR=* ]] || continue
+    value=${line#XDG_VIDEOS_DIR=}
+    value=${value#\"}
+    value=${value%\"}
+    value=${value//\$HOME/$HOME}
+    [[ $value == /* && $value != *$'\n'* ]] || return 1
+    printf '%s\n' "$value"
+    return 0
+  done < "$file"
+  return 1
+}
+
 output_dir() {
   local dir="${SHADOWPLAY_OUTPUT_DIR:-}"
   if [[ -z $dir && -n $CONFIG_OUTPUT_DIR ]]; then
@@ -509,10 +563,8 @@ output_dir() {
       dir="$OMARCHY_SCREENRECORD_DIR/Replays"
     elif [[ -n ${XDG_VIDEOS_DIR:-} ]]; then
       dir="$XDG_VIDEOS_DIR/Replays"
-    elif [[ -f $HOME/.config/user-dirs.dirs ]]; then
-      # shellcheck disable=SC1090
-      source "$HOME/.config/user-dirs.dirs"
-      dir="${XDG_VIDEOS_DIR:-$HOME/Videos}/Replays"
+    elif videos=$(xdg_videos_from_user_dirs); then
+      dir="$videos/Replays"
     else
       dir="$HOME/Videos/Replays"
     fi
@@ -526,12 +578,43 @@ pid_alive() {
   kill -0 "$pid" 2>/dev/null
 }
 
+pid_cmdline() {
+  local pid="$1"
+  tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true
+}
+
+pid_is_ours() {
+  local pid="$1" comm
+  [[ $pid =~ ^[0-9]+$ ]] || return 1
+  pid_alive "$pid" || return 1
+  comm=$(pid_cmdline "$pid")
+  [[ $comm == *omarchy-instant-replay-gsr* || $comm == *omarchy-shadowplay-gsr* || $comm == *fake-gsr* ]] || return 1
+}
+
 read_pid() {
   local pid=""
   [[ -r $PID_FILE ]] || return 1
   pid=$(<"$PID_FILE")
-  pid_alive "$pid" || return 1
+  pid_is_ours "$pid" || return 1
   printf '%s\n' "$pid"
+}
+
+write_pid_file() {
+  local pid="$1" tmp
+  tmp=$(mktemp "$STATE_DIR/.pid.XXXXXX")
+  printf '%s\n' "$pid" > "$tmp"
+  mv -f "$tmp" "$PID_FILE"
+}
+
+acquire_state_lock() {
+  mkdir -p "$STATE_DIR"
+  chmod 700 "$STATE_DIR" 2>/dev/null || true
+  local lock="$STATE_DIR/state.lock"
+  if [[ -L $lock ]]; then
+    die "state lock is a symbolic link"
+  fi
+  exec {STATE_LOCK_FD}>>"$lock"
+  flock "$STATE_LOCK_FD"
 }
 
 cli_running() {
@@ -852,7 +935,8 @@ write_activity() {
   local subject_address="${9:-}"
   local linger_until="${10:-}"
   local crop="${11:-}"
-  local tmp="$STATE_DIR/.activity.$$"
+  local tmp
+  tmp=$(mktemp "$STATE_DIR/.activity.XXXXXX")
   if [[ -z $phase ]]; then
     phase=$(activity_value phase)
   fi
@@ -1000,7 +1084,10 @@ save_replay_path() {
   local path=""
   local -a args=(-ipc "$IPC" save-replay)
   mkdir -p "$STATE_DIR"
-  exec 8>"$STATE_DIR/replay.lock"
+  if [[ -L $STATE_DIR/replay.lock ]]; then
+    die "replay lock is a symbolic link"
+  fi
+  exec 8>>"$STATE_DIR/replay.lock"
   flock 8
   if [[ -n $seconds ]]; then
     args+=("$seconds")
@@ -1015,7 +1102,8 @@ save_replay_path() {
 }
 
 write_segment_index() {
-  local tmp="$SEGMENT_DIR/.index.$$"
+  local tmp
+  tmp=$(mktemp "$SEGMENT_DIR/.index.XXXXXX")
   (umask 077
     cat > "$tmp"
   )
@@ -1160,23 +1248,14 @@ flush_segment() {
   local crop
   crop=$(activity_value crop)
   [[ -n $crop ]] || crop=full
-  printf '%s|%s|%s|%s|%s\n' "$end" "$dest" "$duration" "$audio" "$crop" >> "$SEGMENT_INDEX"
+  local row
+  row=$(printf '%s|%s|%s|%s|%s\n' "$end" "$dest" "$duration" "$audio" "$crop")
+  if [[ -r $SEGMENT_INDEX ]]; then
+    { cat "$SEGMENT_INDEX"; printf '%s' "$row"; } | write_segment_index
+  else
+    printf '%s' "$row" | write_segment_index
+  fi
   discard_old_segments
-}
-
-join_canvas() {
-  local max_w=1920 max_h=1080 name size w h
-  while IFS= read -r line; do
-    [[ -n $line ]] || continue
-    size=${line#*|}
-    size=${size%%|*}
-    w=${size%%x*}
-    h=${size#*x}
-    [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ ]] || continue
-    if (( w > max_w )); then max_w=$w; fi
-    if (( h > max_h )); then max_h=$h; fi
-  done < <(list_monitor_lines)
-  printf '%sx%s\n' "$max_w" "$max_h"
 }
 
 live_capture_differs() {
@@ -1314,9 +1393,17 @@ launch_recorder() {
   rm -f "$IPC"
   mkdir -p "$STATE_DIR"
   : > "$LOG_FILE"
-  bash -c 'exec -a omarchy-instant-replay-gsr "$0" "$@"' "$GSR_BIN" "${gsr_args[@]}" >>"$LOG_FILE" 2>&1 &
+  bash -c '
+    lockfd="$1"
+    shift
+    if [[ $lockfd =~ ^[0-9]+$ ]]; then
+      eval "exec ${lockfd}<&-"
+    fi
+    exec 8<&- 9<&-
+    exec -a omarchy-instant-replay-gsr "$@"
+  ' bash "${STATE_LOCK_FD:-}" "$GSR_BIN" "${gsr_args[@]}" >>"$LOG_FILE" 2>&1 &
   local pid=$!
-  echo "$pid" > "$PID_FILE"
+  write_pid_file "$pid"
 
   if ! wait_until_running "$pid"; then
     local log
@@ -1335,7 +1422,11 @@ launch_recorder() {
     die "replay buffer failed to start"
   fi
 
-  write_activity true "$monitor" "$seconds" "$audio" "$(activity_value last_clip)" "$(now_epoch)"
+  if [[ $CONFIG_MODE == follow || $CONFIG_MODE == pin ]]; then
+    write_activity true "$monitor" "$seconds" "$audio" "$(activity_value last_clip)" "$(now_epoch)" live "" "" "" full
+  else
+    write_activity true "$monitor" "$seconds" "$audio" "$(activity_value last_clip)" "$(now_epoch)" live "-" "-" "-" full
+  fi
 }
 
 split_and_restart() {
@@ -1426,7 +1517,7 @@ join_clip() {
     else
       ff_single+=(-c:v libx264 -preset veryfast -crf 18 -an "$out")
     fi
-    "$FFMPEG_BIN" "${ff_single[@]}" || die "failed to join replay segments"
+    run_ffmpeg "${ff_single[@]}" || die "failed to join replay segments"
     rm -f "$live"
     printf '%s\n' "$out"
     return
@@ -1461,11 +1552,33 @@ join_clip() {
     fc+="${maps}concat=n=${#paths[@]}:v=1:a=0[v]"
     ff_args+=(-filter_complex "$fc" -map "[v]" -an -c:v libx264 -preset veryfast -crf 18 "$out")
   fi
-  "$FFMPEG_BIN" "${ff_args[@]}" || die "failed to join replay segments"
+  run_ffmpeg "${ff_args[@]}" || die "failed to join replay segments"
   rm -f "$live"
   printf '%s\n' "$out"
 }
 
+run_ffmpeg() {
+  command -v "$FFMPEG_BIN" >/dev/null 2>&1 || die "ffmpeg is not installed"
+  "$TIMEOUT_BIN" -k 2 "$FFMPEG_TIMEOUT" "$FFMPEG_BIN" "$@"
+}
+
+
+bounded_stdout() {
+  local max="$1" out
+  shift
+  out=$(
+    set -o pipefail
+    "$TIMEOUT_BIN" -k 1 8 "$@" 2>/dev/null | "$HEAD_BIN" -c $((max + 1))
+  ) || {
+    printf '[]\n'
+    return 1
+  }
+  if [[ ${#out} -gt $max ]]; then
+    printf '[]\n'
+    return 1
+  fi
+  printf '%s' "$out"
+}
 
 windows_json() {
   if [[ -n ${SHADOWPLAY_WINDOWS_JSON:-} ]]; then
@@ -1473,11 +1586,11 @@ windows_json() {
     return
   fi
   if [[ -n ${SHADOWPLAY_WINDOWS_FILE:-} && -r ${SHADOWPLAY_WINDOWS_FILE} ]]; then
-    cat "$SHADOWPLAY_WINDOWS_FILE"
+    "$HEAD_BIN" -c $((HYPR_JSON_MAX + 1)) "$SHADOWPLAY_WINDOWS_FILE"
     return
   fi
   if command -v "$HYPRCTL_BIN" >/dev/null 2>&1; then
-    "$HYPRCTL_BIN" clients -j 2>/dev/null || printf '[]\n'
+    bounded_stdout "$HYPR_JSON_MAX" "$HYPRCTL_BIN" clients -j || true
     return
   fi
   printf '[]\n'
@@ -1489,21 +1602,24 @@ monitors_json() {
     return
   fi
   if [[ -n ${SHADOWPLAY_MONITORS_FILE:-} && -r ${SHADOWPLAY_MONITORS_FILE} ]]; then
-    cat "$SHADOWPLAY_MONITORS_FILE"
+    "$HEAD_BIN" -c $((HYPR_JSON_MAX + 1)) "$SHADOWPLAY_MONITORS_FILE"
     return
   fi
   if command -v "$HYPRCTL_BIN" >/dev/null 2>&1; then
-    "$HYPRCTL_BIN" monitors -j 2>/dev/null || printf '[]\n'
+    bounded_stdout "$HYPR_JSON_MAX" "$HYPRCTL_BIN" monitors -j || true
     return
   fi
   printf '[]\n'
 }
 
 is_chrome_class() {
-  local class="${1,,}"
-  class=${class##*.}
-  case "$class" in
-  waybar|walker|hyprlock)
+  local raw="${1,,}" last
+  last=${raw##*.}
+  case "$raw" in
+  org.quickshell|quickshell) return 0 ;;
+  esac
+  case "$last" in
+  waybar|walker|hyprlock|quickshell)
     return 0
     ;;
   esac
@@ -1582,11 +1698,16 @@ match_list_priority_line() {
 }
 
 parse_windows() {
-  local clients monitors names
+  if [[ ${WINDOWS_SNAPSHOT:-0} == 1 && ${PARSE_WINDOWS_CACHE_SET:-0} == 1 ]]; then
+    [[ -n $PARSE_WINDOWS_CACHE ]] && printf '%s\n' "$PARSE_WINDOWS_CACHE"
+    return
+  fi
+  local clients monitors names rows
   clients=$(windows_json)
   monitors=$(monitors_json)
   names=$(list_monitor_names)
-  SHADOWPLAY_CLIENTS_JSON="$clients" SHADOWPLAY_MONITORS_JSON="$monitors" SHADOWPLAY_MONITOR_NAMES="$names" python3 -c '
+  rows=$(
+    SHADOWPLAY_MONITORS_JSON="$monitors" SHADOWPLAY_MONITOR_NAMES="$names" "$PYTHON_BIN" -I -c '
 import json, os, sys
 def load(raw):
     try:
@@ -1596,7 +1717,7 @@ def load(raw):
     if isinstance(data, dict):
         return [data]
     return data if isinstance(data, list) else []
-clients = load(os.environ.get("SHADOWPLAY_CLIENTS_JSON", "[]"))
+clients = load(sys.stdin.read())
 monitors = load(os.environ.get("SHADOWPLAY_MONITORS_JSON", "[]"))
 id_to_name = {}
 gsr_names = [n for n in os.environ.get("SHADOWPLAY_MONITOR_NAMES", "").splitlines() if n]
@@ -1672,7 +1793,15 @@ if not any(r[4] for r in rows):
         rows = [r[:4] + (r is winner,) + r[5:] for r in rows]
 for klass, initial, monitor, address, focused, _hist, title, atx, aty, ww, hh, pid in rows:
     print("|".join([klass.replace("|"," "), initial.replace("|"," "), monitor.replace("|"," "), address.replace("|"," "), "1" if focused else "0", title.replace("|"," "), atx.replace("|"," "), aty.replace("|"," "), ww.replace("|"," "), hh.replace("|"," "), pid.replace("|"," ")]))
-'
+' <<<"$clients"
+  )
+  if [[ ${WINDOWS_SNAPSHOT:-0} == 1 ]]; then
+    PARSE_WINDOWS_CACHE=$rows
+    PARSE_WINDOWS_CACHE_SET=1
+  fi
+  # Command substitution strips a trailing newline; while-read skips a last line
+  # that does not end in a newline.
+  [[ -n $rows ]] && printf '%s\n' "$rows"
 }
 
 focused_window_line() {
@@ -1753,7 +1882,7 @@ window_pid() {
 
 application_audio_name() {
   local pid="${1:-}" class="${2:-}"
-  SHADOWPLAY_LOOKUP_PID="$pid" SHADOWPLAY_LOOKUP_CLASS="$class" SHADOWPLAY_GSR_BIN="$GSR_BIN" python3 -c '
+  SHADOWPLAY_LOOKUP_PID="$pid" SHADOWPLAY_LOOKUP_CLASS="$class" SHADOWPLAY_GSR_BIN="$GSR_BIN" "$PYTHON_BIN" -I -c '
 import json, os, re, subprocess
 
 def tokens(value):
@@ -1806,7 +1935,7 @@ if sink_raw:
         sinks = []
 if sinks is None:
     try:
-        sinks = json.loads(subprocess.check_output(["pactl", "--format=json", "list", "sink-inputs"], text=True, stderr=subprocess.DEVNULL))
+        sinks = json.loads(subprocess.check_output(["pactl", "--format=json", "list", "sink-inputs"], text=True, stderr=subprocess.DEVNULL, timeout=5))
     except Exception:
         sinks = []
 if not isinstance(sinks, list):
@@ -1814,7 +1943,7 @@ if not isinstance(sinks, list):
 
 gsr = os.environ.get("SHADOWPLAY_GSR_BIN") or "gpu-screen-recorder"
 try:
-    gsr_apps = [line.strip() for line in subprocess.check_output([gsr, "--list-application-audio"], text=True, stderr=subprocess.DEVNULL).splitlines() if line.strip()]
+    gsr_apps = [line.strip() for line in subprocess.check_output([gsr, "--list-application-audio"], text=True, stderr=subprocess.DEVNULL, timeout=5).splitlines() if line.strip()]
 except Exception:
     gsr_apps = []
 
@@ -1886,7 +2015,7 @@ go_armed() {
     stop_recorder
     discard_all_segments
   fi
-  write_activity false "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" armed "-" "-" "-"
+  write_activity false "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" armed "-" "-" "-" "-"
 }
 
 go_live_on() {
@@ -1991,6 +2120,8 @@ cmd_follow_tick() {
   load_config
   [[ $CONFIG_MODE == follow ]] || return 0
   follow_session_active || return 0
+  WINDOWS_SNAPSHOT=1
+  PARSE_WINDOWS_CACHE_SET=0
 
   local phase monitor subject_class subject_address linger_until
   phase=$(activity_value phase)
@@ -2075,6 +2206,8 @@ cmd_pin_tick() {
   load_config
   [[ $CONFIG_MODE == pin ]] || return 0
   follow_session_active || return 0
+  WINDOWS_SNAPSHOT=1
+  PARSE_WINDOWS_CACHE_SET=0
 
   local phase monitor linger_until
   phase=$(activity_value phase)
@@ -2175,7 +2308,7 @@ cmd_start() {
 cmd_stop() {
   stop_recorder
   discard_all_segments
-  write_activity false "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$(activity_value last_clip)" "" off "-" "-" "-"
+  write_activity false "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$(activity_value last_clip)" "" off "-" "-" "-" "-"
 }
 
 cmd_save() {
@@ -2189,7 +2322,10 @@ cmd_save() {
   local live dest dir stamp window job_index="" job_dir crop audio canvas
   window="${seconds:-$CONFIG_SECONDS}"
   mkdir -p "$STATE_DIR" "$SAVE_JOBS_DIR"
-  exec 9>"$STATE_DIR/save.lock"
+  if [[ -L $STATE_DIR/save.lock ]]; then
+    die "save lock is a symbolic link"
+  fi
+  exec 9>>"$STATE_DIR/save.lock"
   flock 9
   discard_old_segments "$window"
   live=$(save_replay_path "$seconds" restart) || die "save-replay did not return a file path"
@@ -2218,7 +2354,11 @@ cmd_save() {
   printf '%s\n' "$canvas" > "$job_dir/canvas"
   printf '%s\n' "$CONFIG_CLIP_SCALE" > "$job_dir/scale"
   flock -u 9
-  bash "${BASH_SOURCE[0]}" finish-save "$job_dir" >/dev/null 2>>"$LOG_FILE" &
+  if [[ ${STATE_LOCK_FD:-} =~ ^[0-9]+$ ]]; then
+    eval 'bash "${BASH_SOURCE[0]}" finish-save "$job_dir" >/dev/null 2>>"$LOG_FILE" '"${STATE_LOCK_FD}"'<&- &'
+  else
+    bash "${BASH_SOURCE[0]}" finish-save "$job_dir" >/dev/null 2>>"$LOG_FILE" &
+  fi
   printf '%s\n' "$!" > "$job_dir/pid"
   disown $! 2>/dev/null || true
   printf '%s\n' "$dest"
@@ -2226,7 +2366,9 @@ cmd_save() {
 
 cmd_finish_save() {
   local job_dir="${1:-}"
-  [[ -n $job_dir && -d $job_dir ]] || die "save job is missing"
+  [[ -n $job_dir && $job_dir == /* && $job_dir != *..* ]] || die "save job is missing"
+  [[ $job_dir == "$SAVE_JOBS_DIR/"* ]] || die "save job is missing"
+  [[ -d $job_dir ]] || die "save job is missing"
   load_config
   local dest live window index crop audio canvas scale path joined=0
   dest=$(<"$job_dir/dest")
@@ -2245,6 +2387,7 @@ cmd_finish_save() {
   joined=1
   consume_segment_job "$index"
   rm -f "$live"
+  acquire_state_lock
   write_activity "$(activity_value running)" "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$path"
   notify "Replay saved" "$path"
   rm -rf "$job_dir"
@@ -2366,8 +2509,8 @@ cmd_windows() {
   clients=$(windows_json)
   monitors=$(monitors_json)
   names=$(list_monitor_names)
-  SHADOWPLAY_CLIENTS_JSON="$clients" SHADOWPLAY_MONITORS_JSON="$monitors" SHADOWPLAY_MONITOR_NAMES="$names" python3 -c '
-import json, os
+  SHADOWPLAY_MONITORS_JSON="$monitors" SHADOWPLAY_MONITOR_NAMES="$names" "$PYTHON_BIN" -I -c '
+import json, os, sys
 def load(raw):
     try:
         data = json.loads(raw or "[]")
@@ -2376,7 +2519,7 @@ def load(raw):
     if isinstance(data, dict):
         return [data]
     return data if isinstance(data, list) else []
-clients = load(os.environ.get("SHADOWPLAY_CLIENTS_JSON", "[]"))
+clients = load(sys.stdin.read())
 monitors = load(os.environ.get("SHADOWPLAY_MONITORS_JSON", "[]"))
 id_to_name = {}
 gsr_names = [n for n in os.environ.get("SHADOWPLAY_MONITOR_NAMES", "").splitlines() if n]
@@ -2424,7 +2567,7 @@ for r in rows:
     r.pop("_hist", None)
     out.append(r)
 print(json.dumps(out))
-'
+' <<<"$clients"
 }
 
 cmd_settings_show() {
@@ -2498,7 +2641,8 @@ cmd_settings_set() {
   codec)
     [[ -n $value ]] || die "codec must not be empty"
     config_value_safe "$value" || die "codec value contains a newline"
-    CONFIG_CODEC="$value"
+    CONFIG_CODEC=$(normalize_codec "$value")
+    [[ $CONFIG_CODEC == "$value" ]] || die "codec must be auto, h264, hevc, av1, vp8, or vp9"
     ;;
   fps)
     [[ $value =~ ^[0-9]+$ ]] || die "fps must be an integer"
@@ -2509,6 +2653,8 @@ cmd_settings_set() {
   quality)
     [[ $value =~ ^[0-9]+$ ]] || die "quality must be an integer"
     CONFIG_QUALITY="$value"
+    clamp_quality
+    [[ $CONFIG_QUALITY == "$value" ]] || die "quality must be between $MIN_QUALITY and $MAX_QUALITY"
     ;;
   cursor)
     [[ $value == true || $value == false ]] || die "cursor must be true or false"
@@ -2717,6 +2863,11 @@ cmd_doctor() {
 
 main() {
   local cmd="${1:-}"
+  case "$cmd" in
+  start|stop|save|status|tick|settings|pick-region|pick-window|pick-blacklist-window|pick-match-window)
+    acquire_state_lock
+    ;;
+  esac
   case "$cmd" in
   ""|-h|--help) usage ;;
   --version|-V) printf '%s %s\n' "$PROGRAM" "$VERSION" ;;

@@ -116,9 +116,9 @@ assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "$XDG_RUNTIME_DIR/omarchy-i
 status=$("$helper" status --json)
 echo "$status" | jq -e '.running == true and .monitor == "DP-1" and .seconds == 60 and .audio == "desktop" and .saving == 0' >/dev/null \
   || fail "status json after start: $status"
-echo "$status" | jq -e '.mode == "monitor" and .filter == "all" and .captureExtent == "monitor" and .clipResolution == "1080p" and .clipScale == "fit" and (.matchList | length) == 0 and (.blacklist | length) == 3' >/dev/null \
+echo "$status" | jq -e '.mode == "monitor" and .filter == "all" and .captureExtent == "monitor" and .clipResolution == "1080p" and .clipScale == "fit" and (.matchList | length) == 0 and (.blacklist | length) == 4' >/dev/null \
   || fail "status json missing mode defaults: $status"
-echo "$status" | jq -e '.blacklist == ["waybar","walker","hyprlock"]' >/dev/null   || fail "new install blacklist should be Omarchy chrome: $status"
+echo "$status" | jq -e '.blacklist == ["org.quickshell","waybar","walker","hyprlock"]' >/dev/null   || fail "new install blacklist should be Omarchy chrome: $status"
 echo "$status" | jq -e '.encoder.codec == "auto" and .encoder.fps == 60 and .encoder.quality == 40000 and .encoder.cursor == true and .encoder.framerateMode == "cfr" and .encoder.bitrateMode == "cbr"' >/dev/null \
   || fail "status json missing encoder knobs: $status"
 
@@ -223,7 +223,7 @@ grep -q 'between' "$work/sec-err" || fail "over-max seconds error was unclear: $
 mkdir -p "$XDG_CONFIG_HOME/omarchy-instant-replay"
 printf 'monitor=\nseconds=60\naudio=desktop\n' > "$XDG_CONFIG_HOME/omarchy-instant-replay/config"
 settings=$("$helper" settings show --json)
-echo "$settings" | jq -e '.blacklist == ["waybar","walker","hyprlock"]' >/dev/null \
+echo "$settings" | jq -e '.blacklist == ["org.quickshell","waybar","walker","hyprlock"]' >/dev/null \
   || fail "omitted blacklist key should seed Omarchy chrome: $settings"
 "$helper" start >/dev/null
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-w"
@@ -752,7 +752,7 @@ write_windows '[]'
 "$helper" settings set mode follow >/dev/null
 "$helper" settings set filter denylist >/dev/null
 settings=$("$helper" settings show --json)
-echo "$settings" | jq -e '.filter == "denylist" and (.blacklist == ["waybar","walker","hyprlock"])' >/dev/null   || fail "denylist should show pre-populated Blacklist: $settings"
+echo "$settings" | jq -e '.filter == "denylist" and (.blacklist == ["org.quickshell","waybar","walker","hyprlock"])' >/dev/null   || fail "denylist should show pre-populated Blacklist: $settings"
 
 write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
 export SHADOWPLAY_NOW=10000
@@ -981,5 +981,57 @@ clip=$(saved)
 [[ -e $clip ]] || fail "Pin Split Clip missing"
 assert_no_gsr_leftovers
 "$helper" stop
+
+# Monitor Save after Follow must not keep the window crop on the live buffer.
+export SHADOWPLAY_NOW=12000
+rm -rf "$replay_dir"
+rm -f "$SHADOWPLAY_FAKE_DIR/concat.list" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "$segment_index"
+"$helper" settings set mode follow >/dev/null
+"$helper" settings set filter all >/dev/null
+"$helper" settings set audio desktop >/dev/null
+write_windows '[{"class":"firefox","pid":4242,"monitor":"DP-1","address":"0xff","focused":true,"at":[3540,80],"size":[800,600]}]'
+"$helper" start >/dev/null
+"$helper" stop
+"$helper" settings set mode monitor >/dev/null
+"$helper" start --monitor=DP-1 >/dev/null
+rm -f "$SHADOWPLAY_FAKE_DIR/ffmpeg.args"
+clip=$(saved)
+if grep -F "crop=" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" >/dev/null 2>&1; then
+  fail "Monitor Save after Follow leaked a window crop: $(<"$SHADOWPLAY_FAKE_DIR/ffmpeg.args")"
+fi
+[[ -e $clip ]] || fail "Monitor Save after Follow missing Clip"
+export SHADOWPLAY_NOW=12010
+write_windows '[{"class":"firefox","pid":4242,"monitor":"DP-1","address":"0xff","focused":true,"at":[3540,80],"size":[800,600]}]'
+"$helper" settings set mode follow >/dev/null
+"$helper" start >/dev/null
+export SHADOWPLAY_NOW=12670
+"$helper" settings set mode monitor >/dev/null
+rm -f "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "$segment_index"
+clip=$(saved)
+if grep -F "crop=" "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" >/dev/null 2>&1; then
+  fail "Monitor Save after expired Follow Split leaked a window crop: $(<"$SHADOWPLAY_FAKE_DIR/ffmpeg.args")"
+fi
+"$helper" stop
+
+# Filter=All skips Omarchy 4 Quickshell chrome.
+write_windows '[{"class":"org.quickshell","monitor":"DP-1","address":"0xqs","focused":true}]'
+export SHADOWPLAY_NOW=12100
+"$helper" settings set mode follow >/dev/null
+"$helper" settings set filter all >/dev/null
+"$helper" start >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.armed == true and .running == false and .phase == "armed"' >/dev/null \
+  || fail "Filter=All should Arm on org.quickshell, not follow the shell: $status"
+[[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Armed launched a Replay Buffer on Omarchy chrome"
+"$helper" stop
+
+if "$helper" settings set codec not-a-codec >/dev/null 2>"$work/codec-err"; then
+  fail "unknown codec was accepted"
+fi
+grep -qi 'codec' "$work/codec-err" || fail "unknown codec error was unclear: $(<"$work/codec-err")"
+if "$helper" settings set quality 999999 >/dev/null 2>"$work/quality-err"; then
+  fail "quality above max was accepted"
+fi
+grep -qi 'between' "$work/quality-err" || fail "over-max quality error was unclear: $(<"$work/quality-err")"
 
 echo OK
