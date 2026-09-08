@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Shapes
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
@@ -114,30 +113,15 @@ BarWidget {
         }
       }
 
-      Shape {
-        id: play
+      OpticalGlyph {
         anchors.centerIn: disc
+        anchors.horizontalCenterOffset: disc.width * 0.05
         width: disc.width
         height: disc.height
-        antialiasing: true
-        preferredRendererType: Shape.CurveRenderer
-
-        readonly property real cx: width / 2
-        readonly property real cy: height / 2
-        readonly property real tw: width * 0.42
-        readonly property real th: height * 0.46
-        readonly property real left: cx - tw * 0.38
-        readonly property real right: cx + tw * 0.62
-
-        ShapePath {
-          fillColor: "#111111"
-          strokeWidth: 0
-          startX: play.left
-          startY: play.cy - play.th / 2
-          PathLine { x: play.right; y: play.cy }
-          PathLine { x: play.left; y: play.cy + play.th / 2 }
-          PathLine { x: play.left; y: play.cy - play.th / 2 }
-        }
+        text: "󰐊"
+        fontFamily: button.fontFamily
+        fontSize: disc.width * 0.58
+        color: "#111111"
       }
     }
   }
