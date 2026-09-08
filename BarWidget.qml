@@ -74,6 +74,7 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     iconComponent: replayMark
+    // Restore the filled-triangle backup with ReplayMarkPlay.
     active: root.running || root.savingCount > 0
     useActiveColor: false
     dimmed: !root.running && root.savingCount === 0
@@ -99,30 +100,9 @@ BarWidget {
 
   Component {
     id: replayMark
-    Item {
-      Rectangle {
-        id: disc
-        anchors.centerIn: parent
-        width: Math.min(parent.width, parent.height) * 0.68
-        height: width
-        radius: width / 2
-        color: button.active ? button.activeColor : button.foreground
-
-        Behavior on color {
-          ColorAnimation { duration: 140; easing.type: Easing.OutCubic }
-        }
-      }
-
-      OpticalGlyph {
-        anchors.centerIn: disc
-        anchors.horizontalCenterOffset: disc.width * 0.05
-        width: disc.width
-        height: disc.height
-        text: "󰐊"
-        fontFamily: button.fontFamily
-        fontSize: disc.width * 0.78
-        color: "#111111"
-      }
+    ReplayMarkLoop {
+      anchors.fill: parent
+      discColor: button.active ? button.activeColor : button.foreground
     }
   }
 
