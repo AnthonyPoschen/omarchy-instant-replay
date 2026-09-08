@@ -5,24 +5,35 @@
   "version": "0.1.0",
   "author": "Anthony Poschen",
   "license": "MIT",
-  "description": "Always-on GPU instant replay for Omarchy: buffer a monitor and save the last N seconds with a hotkey.",
+  "description": "Always-on GPU instant replay for Omarchy: buffer a monitor, region, or window and save the last N seconds with a hotkey.",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
     "displayName": "Instant Replay",
-    "description": "Buffer a monitor and save the last N seconds of gameplay.",
+    "description": "Buffer a monitor, region, or window and save the last N seconds.",
     "category": "Capture",
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
+      "mode": "monitor",
       "monitor": "",
       "seconds": 60,
       "audio": "desktop",
+      "clipResolution": "1080p",
+      "clipScale": "fit",
       "outputDir": ""
     },
     "schema": [
+      {
+        "key": "mode",
+        "type": "enum",
+        "label": "Mode",
+        "options": ["monitor", "follow", "pin", "region"],
+        "defaultValue": "monitor",
+        "description": "monitor pins one output. follow tracks the focused window. pin stays on one window. region pins a rectangle."
+      },
       {
         "key": "monitor",
         "type": "string",
@@ -45,7 +56,22 @@
         "label": "Audio",
         "options": ["none", "desktop", "both"],
         "defaultValue": "desktop",
-        "description": "none records video only. desktop is system audio. both mixes system audio and the microphone."
+        "description": "none records video only. desktop is system audio. both mixes system audio and the microphone. Follow and Pin also offer window and window-mic."
+      },
+      {
+        "key": "clipResolution",
+        "type": "enum",
+        "label": "Clip resolution",
+        "options": ["720p", "1080p", "1440p", "2160p"],
+        "defaultValue": "1080p"
+      },
+      {
+        "key": "clipScale",
+        "type": "enum",
+        "label": "Clip layout",
+        "options": ["fit", "stretch", "center"],
+        "defaultValue": "fit",
+        "description": "fit scales with bars. stretch fills and may distort. center keeps native pixels."
       },
       {
         "key": "outputDir",
