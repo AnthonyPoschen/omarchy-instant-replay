@@ -43,14 +43,15 @@ Item {
       var ink = "#111111"
       var sw = Math.max(2.0, w * 0.18)
       var r = Math.max(2, (w - sw) * 0.34)
-      var start = 40 * Math.PI / 180
-      var end = 300 * Math.PI / 180
+      // 12 o'clock cut; counterclockwise tangent is due left (rewind).
+      var start = 140 * Math.PI / 180
+      var end = 270 * Math.PI / 180
       var c = Math.cos(end)
       var s = Math.sin(end)
       var px = cx + r * c
       var py = cy + r * s
-      var tx = -s
-      var ty = c
+      var tx = s
+      var ty = -c
       var len = sw * 2.3
       var hw = sw * 1.65
 
@@ -61,7 +62,7 @@ Item {
       ctx.lineJoin = "round"
 
       ctx.beginPath()
-      ctx.arc(cx, cy, r, start, end, false)
+      ctx.arc(cx, cy, r, start, end, true)
       ctx.stroke()
 
       var sx = cx + r * Math.cos(start)
