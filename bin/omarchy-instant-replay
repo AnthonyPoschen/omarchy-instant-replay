@@ -1560,7 +1560,11 @@ join_clip() {
 
 run_ffmpeg() {
   command -v "$FFMPEG_BIN" >/dev/null 2>&1 || die "ffmpeg is not installed"
-  "$TIMEOUT_BIN" -k 2 "$FFMPEG_TIMEOUT" "$FFMPEG_BIN" "$@"
+  # Clip fit/stitch is CPU-heavy. Yield to games: lowest niceness, idle I/O.
+  local -a wrap=()
+  command -v nice >/dev/null 2>&1 && wrap+=(nice -n 19)
+  command -v ionice >/dev/null 2>&1 && wrap+=(ionice -c 3)
+  "${wrap[@]}" "$TIMEOUT_BIN" -k 2 "$FFMPEG_TIMEOUT" "$FFMPEG_BIN" "$@"
 }
 
 

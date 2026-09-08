@@ -127,6 +127,8 @@ clip=$(saved)
 [[ -e $clip ]] || fail "Clip was not written"
 [[ ! -e $SHADOWPLAY_FAKE_DIR/saved-seconds ]] || fail "default save should not pass a seconds override"
 [[ -e $SHADOWPLAY_FAKE_DIR/ffmpeg.args ]] || fail "Save should fit the Clip to 1080p"
+[[ -r $SHADOWPLAY_FAKE_DIR/ffmpeg.nice ]] || fail "Save did not record ffmpeg niceness"
+[[ $(<"$SHADOWPLAY_FAKE_DIR/ffmpeg.nice") == 19 ]] || fail "Save ffmpeg should run at nice 19 so games keep the CPU, got $(<"$SHADOWPLAY_FAKE_DIR/ffmpeg.nice")"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "scale=1920:1080:force_original_aspect_ratio=decrease"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
 [[ $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list") == 1 ]] || fail "save without a Split should be one input, got $(wc -l < "$SHADOWPLAY_FAKE_DIR/concat.list")"

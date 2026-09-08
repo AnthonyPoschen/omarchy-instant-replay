@@ -5,6 +5,9 @@ FAKE_DIR="${SHADOWPLAY_FAKE_DIR:?SHADOWPLAY_FAKE_DIR is not set}"
 mkdir -p "$FAKE_DIR"
 
 printf '%s\n' "$@" > "$FAKE_DIR/ffmpeg.args"
+if command -v nice >/dev/null 2>&1; then
+  nice > "$FAKE_DIR/ffmpeg.nice" || true
+fi
 
 running=0
 if [[ -r $FAKE_DIR/ffmpeg.running ]]; then
