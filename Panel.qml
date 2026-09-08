@@ -24,6 +24,15 @@ Panel {
   property bool extrasEncoderOpen: false
   property string hotkeyCopyStatus: ""
   property string clipCopyStatus: ""
+  property var commandQueue: []
+  property string pendingAfter: ""
+  property string statusOut: ""
+  property string statusErr: ""
+  property string monitorsOut: ""
+  property string actionOut: ""
+  property string actionErr: ""
+  property string folderOut: ""
+  readonly property int helperOutputLimit: 262144
 
   readonly property var barIdentity: hostWidget || root
   readonly property bool running: status.running === true
@@ -112,39 +121,57 @@ Panel {
       root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
+  function ingest(proc, which, chunk) {
+    var cur = root[which] || ""
+    var next = String(chunk || "")
+    if (cur.length + next.length > root.helperOutputLimit) {
+      if (proc && typeof proc.signal === "function") proc.signal(15)
+      root[which] = ""
+      return
+    }
+    root[which] = cur + next
+  }
+
+  function runQueuedCommand(args, after) {
+    root.busy = true
+    root.lastError = ""
+    root.actionOut = ""
+    root.actionErr = ""
+    root.pendingAfter = after || ""
+    actionProc.command = root.runHelper(args)
+    actionProc.running = true
+  }
+
+  function enqueueCommand(args, after) {
+    if (root.helperPath === "") return
+    if (actionProc.running) {
+      root.commandQueue.push({ args: args, after: after || "" })
+      return
+    }
+    root.runQueuedCommand(args, after)
+  }
+
   function applySetting(key, value) {
     var values = {}
     values[key] = value
     root.persistSettings(values)
-    if (root.helperPath === "" || actionProc.running) return
-    root.busy = true
-    root.lastError = ""
-    actionProc.command = root.runHelper(["settings", "set", key, String(value)])
-    actionProc.running = true
+    root.enqueueCommand(["settings", "set", key, String(value)])
   }
 
   function applyMatchList(list) {
     var encoded = Model.encodeList(list)
     root.persistSettings({ matchList: encoded })
-    if (root.helperPath === "" || actionProc.running) return
-    root.busy = true
-    root.lastError = ""
-    actionProc.command = root.runHelper(["settings", "set", "matchList", encoded])
-    actionProc.running = true
+    root.enqueueCommand(["settings", "set", "matchList", encoded])
   }
 
   function applyBlacklist(list) {
     var encoded = Model.encodeList(list)
     root.persistSettings({ blacklist: encoded })
-    if (root.helperPath === "" || actionProc.running) return
-    root.busy = true
-    root.lastError = ""
-    actionProc.command = root.runHelper(["settings", "set", "blacklist", encoded])
-    actionProc.running = true
+    root.enqueueCommand(["settings", "set", "blacklist", encoded])
   }
 
   function runHelper(args) {
-    var command = ["bash", root.helperPath]
+    var command = ["/usr/bin/bash", root.helperPath]
     for (var i = 0; i < args.length; i++) command.push(args[i])
     return command
   }
@@ -152,18 +179,18 @@ Panel {
   function refresh() {
     if (root.helperPath === "") return
     if (!monitorsProc.running) {
+      root.monitorsOut = ""
       monitorsProc.command = root.runHelper(["monitors", "--json"])
       monitorsProc.running = true
     }
     if (statusProc.running) return
+    root.statusOut = ""
+    root.statusErr = ""
     statusProc.command = root.runHelper(["status", "--json"])
     statusProc.running = true
   }
 
   function startBuffer() {
-    if (root.helperPath === "" || actionProc.running) return
-    root.busy = true
-    root.lastError = ""
     var args = [
       "start",
       "--mode=" + root.configuredMode,
@@ -173,16 +200,11 @@ Panel {
     if (root.configuredMode !== "follow" && root.configuredMode !== "pin") args.push("--monitor=" + root.configuredMonitor)
     if (root.configuredMode === "region") args.push("--region=" + root.configuredRegion)
     if (root.configuredMode === "pin") args.push("--pin=" + root.configuredPinAddress)
-    actionProc.command = root.runHelper(args)
-    actionProc.running = true
+    root.enqueueCommand(args)
   }
 
   function stopBuffer() {
-    if (root.helperPath === "" || actionProc.running) return
-    root.busy = true
-    root.lastError = ""
-    actionProc.command = root.runHelper(["stop"])
-    actionProc.running = true
+    root.enqueueCommand(["stop"])
   }
 
   function save() {
@@ -194,64 +216,35 @@ Panel {
   }
 
   function copyHotkeys() {
-    var text = Model.hotkeyBindSnippet()
-    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(text) + " | wl-copy"])
+    Quickshell.execDetached(["/usr/bin/wl-copy", "--", Model.hotkeyBindSnippet()])
     root.hotkeyCopyStatus = "Copied"
   }
 
   function copyLastClip() {
     var text = String(root.status.lastClip || "")
     if (text === "") return
-    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(text) + " | wl-copy"])
+    Quickshell.execDetached(["/usr/bin/wl-copy", "--", text])
     root.clipCopyStatus = "Copied"
   }
 
   function pickWindow() {
-    if (root.helperPath === "" || actionProc.running) return
     root.close()
-    Qt.callLater(function() {
-      if (actionProc.running) return
-      root.busy = true
-      root.lastError = ""
-      actionProc.command = root.runHelper(["pick-window"])
-      actionProc.running = true
-    })
+    Qt.callLater(function() { root.enqueueCommand(["pick-window"], "pick") })
   }
 
   function pickMatchWindow() {
-    if (root.helperPath === "" || actionProc.running) return
     root.close()
-    Qt.callLater(function() {
-      if (actionProc.running) return
-      root.busy = true
-      root.lastError = ""
-      actionProc.command = root.runHelper(["pick-match-window"])
-      actionProc.running = true
-    })
+    Qt.callLater(function() { root.enqueueCommand(["pick-match-window"], "pick") })
   }
 
   function pickBlacklistWindow() {
-    if (root.helperPath === "" || actionProc.running) return
     root.close()
-    Qt.callLater(function() {
-      if (actionProc.running) return
-      root.busy = true
-      root.lastError = ""
-      actionProc.command = root.runHelper(["pick-blacklist-window"])
-      actionProc.running = true
-    })
+    Qt.callLater(function() { root.enqueueCommand(["pick-blacklist-window"], "pick") })
   }
 
   function pickRegion() {
-    if (root.helperPath === "" || actionProc.running) return
     root.close()
-    Qt.callLater(function() {
-      if (actionProc.running) return
-      root.busy = true
-      root.lastError = ""
-      actionProc.command = root.runHelper(["pick-region"])
-      actionProc.running = true
-    })
+    Qt.callLater(function() { root.enqueueCommand(["pick-region"], "pick") })
   }
 
   function pickOutputDir() {
@@ -259,6 +252,7 @@ Panel {
     root.close()
     Qt.callLater(function() {
       if (folderPickProc.running) return
+      root.folderOut = ""
       folderPickProc.command = ["omarchy-file-select", "--directory", "--title", "Clips folder"]
       folderPickProc.running = true
     })
@@ -275,44 +269,43 @@ Panel {
 
   onHelperPathChanged: root.refresh()
   Component.onCompleted: root.refresh()
+  Component.onDestruction: {
+    statusProc.running = false
+    monitorsProc.running = false
+    actionProc.running = false
+    folderPickProc.running = false
+  }
 
   Timer {
     id: statusTimer
-    interval: root.savingCount > 0 ? 400 : 2000
+    interval: {
+      if (root.savingCount > 0) return 400
+      if ((root.configuredMode === "follow" || root.configuredMode === "pin") && root.sessionOn) return 400
+      if (root.running || root.opened) return 2000
+      return 8000
+    }
     repeat: true
     running: true
     onTriggered: root.refresh()
   }
 
-  Timer {
-    id: followTimer
-    interval: 400
-    repeat: true
-    running: (root.configuredMode === "follow" || root.configuredMode === "pin") && root.sessionOn && root.helperPath !== ""
-    onTriggered: {
-      if (followTickProc.running) return
-      followTickProc.command = root.runHelper(["tick"])
-      followTickProc.running = true
-    }
-  }
-
-  Process {
-    id: followTickProc
-    stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true }
-  }
-
   Process {
     id: statusProc
-    stdout: StdioCollector { id: statusOutput; waitForEnd: true }
-    stderr: StdioCollector { id: statusError; waitForEnd: true }
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) { root.ingest(statusProc, "statusOut", chunk) }
+    }
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) { root.ingest(statusProc, "statusErr", chunk) }
+    }
     onExited: function(exitCode) {
       Qt.callLater(function() {
         if (exitCode === 0) {
-          root.status = Model.parseStatus(statusOutput.text)
+          root.status = Model.parseStatus(root.statusOut)
           root.maybeResumeSession()
         } else if (root.lastError === "") {
-          var message = String(statusError.text || "").trim()
+          var message = Model.plainLabel(String(root.statusErr || "").trim(), 400)
           if (message !== "") root.lastError = message
         }
       })
@@ -321,22 +314,28 @@ Panel {
 
   Process {
     id: monitorsProc
-    stdout: StdioCollector { id: monitorsOutput; waitForEnd: true }
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) { root.ingest(monitorsProc, "monitorsOut", chunk) }
+    }
     onExited: function(exitCode) {
       Qt.callLater(function() {
-        if (exitCode === 0) root.monitors = Model.parseMonitors(monitorsOutput.text)
+        if (exitCode === 0) root.monitors = Model.parseMonitors(root.monitorsOut)
       })
     }
   }
 
   Process {
     id: folderPickProc
-    stdout: StdioCollector { id: folderPickOut; waitForEnd: true }
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) { root.ingest(folderPickProc, "folderOut", chunk) }
+    }
     onExited: function(exitCode) {
       Qt.callLater(function() {
         if (exitCode === 0) {
-          var path = String(folderPickOut.text || "").trim()
-          if (path !== "") {
+          var path = String(root.folderOut || "").trim()
+          if (path !== "" && path.charAt(0) === "/" && path.indexOf("\n") === -1) {
             outputDirField.text = path
             root.applySetting("outputDir", path)
           }
@@ -348,17 +347,24 @@ Panel {
 
   Process {
     id: actionProc
-    stdout: StdioCollector { id: actionOutput; waitForEnd: true }
-    stderr: StdioCollector { id: actionError; waitForEnd: true }
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) { root.ingest(actionProc, "actionOut", chunk) }
+    }
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) { root.ingest(actionProc, "actionErr", chunk) }
+    }
     onExited: function(exitCode) {
       Qt.callLater(function() {
-        root.busy = false
+        var reopen = root.pendingAfter === "pick"
+        root.pendingAfter = ""
         if (exitCode !== 0) {
-          var message = String(actionError.text || "").trim()
+          var message = Model.plainLabel(String(root.actionErr || "").trim(), 400)
           root.lastError = message !== "" ? message : "Instant Replay command failed."
         } else {
           root.lastError = ""
-          var parsed = Model.parseJson(actionOutput.text, null)
+          var parsed = Model.parseJson(root.actionOut, null)
           if (parsed && typeof parsed === "object" && (parsed.region !== undefined || parsed.pinAddress !== undefined || parsed.blacklist !== undefined || parsed.matchList !== undefined)) {
             var values = {}
             if (parsed.region !== undefined) values.region = String(parsed.region || "")
@@ -369,10 +375,14 @@ Panel {
             root.persistSettings(values)
           }
         }
+        if (root.commandQueue.length > 0) {
+          var next = root.commandQueue.shift()
+          root.runQueuedCommand(next.args, next.after)
+          return
+        }
+        root.busy = false
         root.refresh()
-        var lastArg = String(actionProc.command && actionProc.command.length ? actionProc.command[actionProc.command.length - 1] : "")
-        if (lastArg === "pick-region" || lastArg === "pick-window" || lastArg === "pick-blacklist-window" || lastArg === "pick-match-window")
-          root.open()
+        if (reopen) root.open()
       })
     }
   }
@@ -403,7 +413,7 @@ Panel {
 
         PanelHero {
           title: "Instant Replay"
-          meta: Model.statusLabel(root.status)
+          meta: Model.plainLabel(Model.statusLabel(root.status), 180)
           detail: ""
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
@@ -412,7 +422,8 @@ Panel {
         Text {
           width: parent.width
           visible: root.lastError !== ""
-          text: root.lastError
+          text: Model.plainLabel(root.lastError, 400)
+          textFormat: Text.PlainText
           wrapMode: Text.Wrap
           color: Color.urgent
           font.family: root.contentFontFamily
@@ -439,7 +450,8 @@ Panel {
 
           Text {
             width: parent.width - copyClipButton.width - parent.spacing
-            text: root.status.lastClip
+            text: Model.plainLabel(root.status.lastClip, 256)
+            textFormat: Text.PlainText
             elide: Text.ElideMiddle
             color: Qt.darker(root.contentForeground, 1.3)
             font.family: root.contentFontFamily
@@ -491,6 +503,7 @@ Panel {
 
           Text {
             text: "Allowlist"
+            textFormat: Text.PlainText
             color: Qt.darker(root.contentForeground, 1.4)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
@@ -505,7 +518,8 @@ Panel {
 
               Text {
                 width: parent.width - 36 - parent.spacing
-                text: modelData
+                text: Model.plainLabel(modelData, 128)
+                textFormat: Text.PlainText
                 elide: Text.ElideMiddle
                 color: root.contentForeground
                 font.family: root.contentFontFamily
@@ -552,6 +566,7 @@ Panel {
 
           Text {
             text: "Blacklist"
+            textFormat: Text.PlainText
             color: Qt.darker(root.contentForeground, 1.4)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
@@ -566,7 +581,8 @@ Panel {
 
               Text {
                 width: parent.width - 36 - parent.spacing
-                text: modelData
+                text: Model.plainLabel(modelData, 128)
+                textFormat: Text.PlainText
                 elide: Text.ElideMiddle
                 color: root.contentForeground
                 font.family: root.contentFontFamily
@@ -625,7 +641,8 @@ Panel {
 
           Text {
             width: parent.width - pickWindowButton.width - parent.spacing
-            text: String(root.status.subject || "") !== "" ? ("Pinned · " + root.status.subject) : (root.configuredPinAddress !== "" ? ("Pinned · " + root.configuredPinAddress) : "No window yet")
+            text: String(root.status.subject || "") !== "" ? ("Pinned · " + Model.plainLabel(root.status.subject, 80)) : (root.configuredPinAddress !== "" ? ("Pinned · " + Model.plainLabel(root.configuredPinAddress, 32)) : "No window yet")
+            textFormat: Text.PlainText
             elide: Text.ElideMiddle
             color: root.contentForeground
             font.family: root.contentFontFamily
@@ -652,7 +669,8 @@ Panel {
 
           Text {
             width: parent.width - pickRegionButton.width - parent.spacing
-            text: root.configuredRegion !== "" ? root.configuredRegion : "No rectangle yet"
+            text: root.configuredRegion !== "" ? Model.plainLabel(root.configuredRegion, 64) : "No rectangle yet"
+            textFormat: Text.PlainText
             elide: Text.ElideMiddle
             color: root.contentForeground
             font.family: root.contentFontFamily
@@ -717,6 +735,7 @@ Panel {
 
         Text {
           text: "Clips folder"
+          textFormat: Text.PlainText
           color: Qt.darker(root.contentForeground, 1.4)
           font.family: root.contentFontFamily
           font.pixelSize: Style.font.caption
@@ -731,7 +750,8 @@ Panel {
             id: outputDirField
             width: parent.width - browseFolderButton.width - parent.spacing
             text: root.configuredOutputDir
-            placeholderText: root.status.outputDir !== "" ? root.status.outputDir : "Videos/Replays"
+            placeholderText: root.status.outputDir !== "" ? Model.plainLabel(root.status.outputDir, 80) : "Videos/Replays"
+            maximumLength: 512
             foreground: root.contentForeground
             onEditingFinished: {
               if (root.configuredOutputDir === text) return
@@ -870,6 +890,7 @@ Panel {
 
         Text {
           text: extra.open ? "▼" : "▶"
+          textFormat: Text.PlainText
           color: extra.foreground
           font.family: extra.fontFamily
           font.pixelSize: Style.font.heading

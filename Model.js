@@ -8,6 +8,19 @@ function boundedInteger(value, fallback, min, max) {
   return n
 }
 
+function capString(value, max) {
+  var s = String(value == null ? "" : value)
+  if (max > 0 && s.length > max) return s.slice(0, max)
+  return s
+}
+
+function plainLabel(value, max) {
+  var s = capString(value, max || 200)
+  s = s.replace(/[<>&]/g, "")
+  s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+  return s
+}
+
 function parseJson(text, fallback) {
   try {
     return JSON.parse(String(text || ""))
@@ -22,21 +35,21 @@ function parseStatus(text) {
   var encoder = status.encoder && typeof status.encoder === "object" ? status.encoder : {}
   return {
     running: status.running === true,
-    monitor: String(status.monitor || ""),
-    configuredMonitor: String(status.configuredMonitor || ""),
+    monitor: capString(status.monitor || "", 64),
+    configuredMonitor: capString(status.configuredMonitor || "", 64),
     seconds: boundedInteger(status.seconds, 60, minSeconds(), maxSeconds()),
     audio: normalizeAudio(status.audio),
-    pid: String(status.pid || ""),
-    ipc: String(status.ipc || ""),
-    outputDir: String(status.outputDir || ""),
-    lastClip: String(status.lastClip || ""),
+    pid: capString(status.pid || "", 16),
+    ipc: capString(status.ipc || "", 256),
+    outputDir: capString(status.outputDir || "", 512),
+    lastClip: capString(status.lastClip || "", 512),
     saving: boundedInteger(status.saving, 0, 0, 99),
     phase: String(status.phase || (status.running === true ? "live" : "off")),
     armed: status.armed === true || status.phase === "armed",
     linger: status.linger === true || status.phase === "linger",
-    subject: String(status.subject || ""),
-    region: String(status.region || ""),
-    pinAddress: String(status.pinAddress || ""),
+    subject: capString(status.subject || "", 128),
+    region: capString(status.region || "", 64),
+    pinAddress: capString(status.pinAddress || "", 32),
     mode: normalizeMode(status.mode),
     filter: normalizeFilter(status.filter),
     captureExtent: normalizeCaptureExtent(status.captureExtent),
@@ -70,13 +83,14 @@ function parseWindows(text) {
     var klass = String(row.class || row.initialClass || "")
     if (!klass) continue
     out.push({
-      className: klass,
-      initialClass: String(row.initialClass || klass),
-      title: String(row.title || ""),
-      monitor: String(row.monitor || ""),
-      address: String(row.address || ""),
+      className: capString(klass, 128),
+      initialClass: capString(row.initialClass || klass, 128),
+      title: capString(row.title || "", 200),
+      monitor: capString(row.monitor || "", 64),
+      address: capString(row.address || "", 32),
       focused: row.focused === true
     })
+    if (out.length >= 64) break
   }
   return out
 }
@@ -89,10 +103,11 @@ function parseMonitors(text) {
     var row = rows[i]
     if (!row || !row.name) continue
     out.push({
-      name: String(row.name),
-      size: String(row.size || ""),
+      name: capString(row.name, 64),
+      size: capString(row.size || "", 32),
       focused: row.focused === true
     })
+    if (out.length >= 16) break
   }
   return out
 }
@@ -177,14 +192,15 @@ function stringList(value) {
   if (!Array.isArray(value)) return []
   var out = []
   for (var i = 0; i < value.length; i++) {
-    var item = String(value[i] || "").trim()
+    var item = capString(String(value[i] || "").trim(), 128)
     if (item) out.push(item)
+    if (out.length >= 64) break
   }
   return out
 }
 
 function defaultBlacklist() {
-  return ["waybar", "walker", "hyprlock"]
+  return ["org.quickshell", "waybar", "walker", "hyprlock"]
 }
 
 function encodeList(value) {

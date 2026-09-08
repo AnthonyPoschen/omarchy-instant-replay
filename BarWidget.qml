@@ -81,7 +81,7 @@ BarWidget {
     opticalSize: Style.bar.iconCanvas + 8
     slotSize: Style.bar.iconSlot + 6
     tooltipText: root.savingCount > 0
-      ? (root.savingCount === 1 ? "Saving clip" : "Saving " + root.savingCount + " clips")
+      ? (root.savingCount === 1 ? "Saving clip" : ("Saving " + Math.min(root.savingCount, 99) + " clips"))
       : (root.running ? "Save replay" : "Start replay buffer")
 
     onPressed: function(buttonCode) {
@@ -113,6 +113,7 @@ BarWidget {
       id: badgeLabel
       anchors.centerIn: parent
       text: root.savingCount > 9 ? "9+" : String(root.savingCount)
+      textFormat: Text.PlainText
       color: Color.background
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
