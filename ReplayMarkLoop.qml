@@ -1,7 +1,7 @@
 import QtQuick
 
-// Themed disc with a thick replay loop (arc + arrow + play). Drawn on
-// Canvas so stroke weight stays even at bar size.
+// Themed disc with a thick replay loop. The arrow sits on the stroke end;
+// there is no play triangle in the middle at bar size.
 Item {
   property color discColor: "#f4f1ea"
 
@@ -41,43 +41,39 @@ Item {
       var cx = w / 2
       var cy = h / 2
       var ink = "#111111"
-      var sw = Math.max(2.0, w * 0.17)
+      var sw = Math.max(2.0, w * 0.18)
       var r = Math.max(2, (w - sw) * 0.34)
-      // Gap at 12–2 o'clock, arrow at 12 pointing right (Material replay).
-      var start = 330 * Math.PI / 180
-      var end = 270 * Math.PI / 180
+      var start = 40 * Math.PI / 180
+      var end = 300 * Math.PI / 180
+      var c = Math.cos(end)
+      var s = Math.sin(end)
+      var px = cx + r * c
+      var py = cy + r * s
+      var tx = -s
+      var ty = c
+      var len = sw * 1.15
+      var hw = sw * 0.82
 
       ctx.strokeStyle = ink
       ctx.fillStyle = ink
       ctx.lineWidth = sw
-      ctx.lineCap = "round"
+      ctx.lineCap = "butt"
       ctx.lineJoin = "round"
 
       ctx.beginPath()
       ctx.arc(cx, cy, r, start, end, false)
       ctx.stroke()
 
-      var tx = -Math.sin(end)
-      var ty = Math.cos(end)
-      var ex = cx + r * Math.cos(end)
-      var ey = cy + r * Math.sin(end)
-      var al = sw * 1.25
-      var aw = sw * 0.85
-      var tipX = ex + tx * sw * 0.2
-      var tipY = ey + ty * sw * 0.2
+      var sx = cx + r * Math.cos(start)
+      var sy = cy + r * Math.sin(start)
       ctx.beginPath()
-      ctx.moveTo(tipX, tipY)
-      ctx.lineTo(tipX - tx * al - ty * aw, tipY - ty * al + tx * aw)
-      ctx.lineTo(tipX - tx * al + ty * aw, tipY - ty * al - tx * aw)
-      ctx.closePath()
+      ctx.arc(sx, sy, sw / 2, 0, Math.PI * 2)
       ctx.fill()
 
-      var pw = w * 0.22
-      var ph = h * 0.26
       ctx.beginPath()
-      ctx.moveTo(cx - pw * 0.28, cy - ph / 2)
-      ctx.lineTo(cx + pw * 0.62, cy)
-      ctx.lineTo(cx - pw * 0.28, cy + ph / 2)
+      ctx.moveTo(px + tx * len, py + ty * len)
+      ctx.lineTo(px - tx * sw * 0.15 - ty * hw, py - ty * sw * 0.15 + tx * hw)
+      ctx.lineTo(px - tx * sw * 0.15 + ty * hw, py - ty * sw * 0.15 - tx * hw)
       ctx.closePath()
       ctx.fill()
     }
