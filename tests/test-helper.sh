@@ -620,6 +620,26 @@ fi
 unset SHADOWPLAY_SINK_INPUTS_JSON
 rm -f "$SHADOWPLAY_FAKE_DIR/app-audio"
 "$helper" stop
+
+# Java games (RuneLite) play through PipeWire ALSA. The stream node has no
+# process id; the Client does. GSR lists "PipeWire ALSA [java]", not RuneLite.
+export SHADOWPLAY_NOW=8370
+rm -f "$segment_index" "$SHADOWPLAY_FAKE_DIR/gsr.args"
+printf 'Spotify\nWEBRTC VoiceEngine\nPipeWire ALSA [java]\n' > "$SHADOWPLAY_FAKE_DIR/app-audio"
+export SHADOWPLAY_PW_DUMP_JSON='[{"id":97,"type":"PipeWire:Interface:Client","info":{"props":{"application.name":"PipeWire ALSA [java]","application.process.binary":"java","application.process.id":"3700462"}}},{"id":114,"type":"PipeWire:Interface:Node","info":{"props":{"media.class":"Stream/Output/Audio","application.name":"PipeWire ALSA [java]","node.name":"alsa_playback.java","client.id":97}}}]'
+"$helper" settings set audio window >/dev/null
+write_windows '[{"class":"net-runelite-client-RuneLite","pid":3700462,"monitor":"DP-1","address":"0xrl","focused":true}]'
+"$helper" start >/dev/null
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "app:PipeWire ALSA [java]"
+if grep -F "app:RuneLite" "$SHADOWPLAY_FAKE_DIR/gsr.args" >/dev/null; then
+  fail "window audio must not pass Hyprland class RuneLite to GSR"
+fi
+if grep -F "app:net-runelite-client-RuneLite" "$SHADOWPLAY_FAKE_DIR/gsr.args" >/dev/null; then
+  fail "window audio must not pass a Java window class to GSR"
+fi
+unset SHADOWPLAY_PW_DUMP_JSON
+rm -f "$SHADOWPLAY_FAKE_DIR/app-audio"
+"$helper" stop
 "$helper" settings set audio desktop >/dev/null
 
 # Follow Capture Extent: default Window, crop, linger gap, Split-on-change

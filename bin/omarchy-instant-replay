@@ -1945,8 +1945,9 @@ def stream_from_props(props):
         return None
     return {
         "name": name,
-        "pid": str(props.get("application.process.id") or "").strip(),
+        "pid": str(props.get("application.process.id") or props.get("pipewire.sec.pid") or "").strip(),
         "binary": str(props.get("application.process.binary") or "").strip(),
+        "node": node,
     }
 
 def streams_from_pactl(items):
@@ -1965,6 +1966,15 @@ def streams_from_pw(data):
     out = []
     if not isinstance(data, list):
         return out
+    by_id = {}
+    for obj in data:
+        if not isinstance(obj, dict):
+            continue
+        oid = obj.get("id")
+        info = obj.get("info") or {}
+        props = info.get("props") or {}
+        if isinstance(props, dict) and oid is not None:
+            by_id[oid] = props
     for obj in data:
         if not isinstance(obj, dict):
             continue
@@ -1975,8 +1985,20 @@ def streams_from_pw(data):
         if props.get("media.class") != "Stream/Output/Audio":
             continue
         row = stream_from_props(props)
-        if row:
-            out.append(row)
+        if not row:
+            continue
+        if not row["pid"]:
+            cid = props.get("client.id")
+            client = by_id.get(cid) or {}
+            if not client and cid is not None:
+                try:
+                    client = by_id.get(int(cid)) or {}
+                except (TypeError, ValueError):
+                    client = {}
+            row["pid"] = str(client.get("application.process.id") or client.get("pipewire.sec.pid") or "").strip()
+            if not row["binary"]:
+                row["binary"] = str(client.get("application.process.binary") or "").strip()
+        out.append(row)
     return out
 
 pid = str(os.environ.get("SHADOWPLAY_LOOKUP_PID") or "")
@@ -2036,11 +2058,18 @@ if not sink_raw and not pw_raw and not os.environ.get("SHADOWPLAY_FAKE_DIR"):
         pass
 
 class_tokens = set(tokens(klass)) | set(tokens(last_component(klass)))
+if pid:
+    try:
+        with open("/proc/%s/comm" % pid, "r", encoding="utf-8") as fh:
+            class_tokens |= set(tokens(fh.read().strip()))
+    except Exception:
+        pass
 best_name, best_score = "", -1
 for item in streams:
     name = item.get("name") or ""
     proc_id = item.get("pid") or ""
     binary = item.get("binary") or ""
+    node = item.get("node") or ""
     if not name:
         continue
     score = 0
@@ -2049,7 +2078,7 @@ for item in streams:
     elif pid and proc_id and pid in ancestors(proc_id):
         score = 90
     else:
-        overlap = len(class_tokens & (set(tokens(binary)) | set(tokens(name))))
+        overlap = len(class_tokens & (set(tokens(binary)) | set(tokens(name)) | set(tokens(node))))
         if overlap:
             score = 50 + overlap * 10
     canon = gsr_canonical(name, gsr_apps)
