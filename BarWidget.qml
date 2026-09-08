@@ -77,8 +77,8 @@ BarWidget {
     active: root.running || root.savingCount > 0
     useActiveColor: false
     dimmed: !root.running && root.savingCount === 0
-    fontSize: Style.bar.iconFont
-    opticalSize: Style.bar.iconCanvas
+    fontSize: Style.font.iconLarge
+    opticalSize: Style.bar.iconCanvas + 4
     slotSize: Style.bar.iconSlot
     tooltipText: root.savingCount > 0
       ? (root.savingCount === 1 ? "Saving clip" : ("Saving " + Math.min(root.savingCount, 99) + " clips"))
@@ -103,7 +103,7 @@ BarWidget {
       Rectangle {
         id: disc
         anchors.centerIn: parent
-        width: Math.min(parent.width, parent.height) * 0.68
+        width: Math.min(parent.width, parent.height) * 0.86
         height: width
         radius: width / 2
         color: button.active ? button.activeColor : button.foreground
@@ -115,11 +115,11 @@ BarWidget {
 
       OpticalGlyph {
         anchors.centerIn: disc
-        width: disc.width * 0.78
-        height: disc.height * 0.78
+        width: disc.width * 0.82
+        height: disc.height * 0.82
         text: "󰑙"
         fontFamily: button.fontFamily
-        fontSize: disc.width * 0.62
+        fontSize: disc.width * 0.68
         color: "#111111"
       }
     }
