@@ -819,10 +819,12 @@ pick_window_from_click() {
     (( ww > 0 && hh > 0 )) || continue
     boxes+="${atx},${aty} ${ww}x${hh}"$'\n'
   done < <(parse_windows)
-  [[ -n $boxes ]] || die "no windows to pick"
-  spec=$("$slurp" -r <<<"$boxes") || die "window picker was cancelled"
-  spec=$(normalize_region_spec "$spec") || die "window picker returned an invalid rectangle"
-  parse_region_spec "$spec" || die "window picker returned an invalid rectangle"
+  [[ -n $boxes ]] || return 1
+  # slurp -r rejects empty lines. A here-string always appends a newline, which
+  # would add a blank line after boxes already end in one.
+  spec=$(printf '%s' "$boxes" | "$slurp" -r) || return 1
+  spec=$(normalize_region_spec "$spec") || return 1
+  parse_region_spec "$spec" || return 1
   rx=$REGION_X; ry=$REGION_Y; rw=$REGION_W; rh=$REGION_H
   cx=$((rx + rw / 2))
   cy=$((ry + rh / 2))

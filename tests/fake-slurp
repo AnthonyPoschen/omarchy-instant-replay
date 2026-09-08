@@ -1,4 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Omarchy's region picker prints slurp geometry: X,Y WxH
+# Window pick uses slurp -r and feeds predefined boxes on stdin.
+
+FAKE_DIR="${SHADOWPLAY_FAKE_DIR:?SHADOWPLAY_FAKE_DIR is not set}"
+restrict=false
+for arg in "$@"; do
+  [[ $arg == -r ]] && restrict=true
+done
+
+if [[ $restrict == true ]]; then
+  : > "$FAKE_DIR/slurp.stdin"
+  first=""
+  while IFS= read -r line || [[ -n ${line:-} ]]; do
+    printf '%s\n' "$line" >> "$FAKE_DIR/slurp.stdin"
+    if [[ -z $line ]]; then
+      printf 'invalid box format: %s\n' "$line" >&2
+      exit 1
+    fi
+    if [[ ! $line =~ ^-?[0-9]+,-?[0-9]+[[:space:]]+[0-9]+x[0-9]+ ]]; then
+      printf 'invalid box format: %s\n' "$line" >&2
+      exit 1
+    fi
+    if [[ -z $first ]]; then
+      first=$line
+    fi
+  done
+  if [[ -n ${SHADOWPLAY_SLURP_REGION:-} ]]; then
+    printf '%s\n' "$SHADOWPLAY_SLURP_REGION"
+  elif [[ -n $first ]]; then
+    printf '%s\n' "$first"
+  else
+    printf 'selection cancelled\n' >&2
+    exit 1
+  fi
+  exit 0
+fi
+
 printf '%s\n' "${SHADOWPLAY_SLURP_REGION:-100,100 200x200}"

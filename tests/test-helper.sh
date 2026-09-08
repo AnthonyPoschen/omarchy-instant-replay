@@ -831,6 +831,23 @@ echo "$settings" | jq -e '.mode != "pin"' >/dev/null || fail "blacklist pick swi
 unset SHADOWPLAY_WINDOW_PICKER
 unset SHADOWPLAY_PICKED_WINDOW
 
+# Click-pick (slurp -r) must not feed a blank line. Real slurp prints
+# "invalid box format:" and exits, which the panel showed as a cancelled pick.
+export SHADOWPLAY_SLURP_BIN="$fake_slurp"
+unset SHADOWPLAY_SLURP_REGION
+"$helper" settings set blacklist "waybar,walker,hyprlock" >/dev/null
+write_windows '[{"class":"kitty","monitor":"DP-1","address":"0xkit","focused":false,"at":[100,100],"size":[200,200]},{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true,"at":[400,100],"size":[200,200]}]'
+settings=$("$helper" pick-blacklist-window)
+echo "$settings" | jq -e '.mode == "follow" and (.blacklist | index("kitty") != null)' >/dev/null \
+  || fail "slurp denylist pick should add the clicked window class: $settings"
+[[ -r $SHADOWPLAY_FAKE_DIR/slurp.stdin ]] || fail "click picker did not invoke slurp"
+if grep -q '^$' "$SHADOWPLAY_FAKE_DIR/slurp.stdin"; then
+  fail "slurp stdin contained a blank line (invalid box format)"
+fi
+grep -F '100,100 200x200' "$SHADOWPLAY_FAKE_DIR/slurp.stdin" >/dev/null \
+  || fail "slurp stdin missing window box: $(<"$SHADOWPLAY_FAKE_DIR/slurp.stdin")"
+unset SHADOWPLAY_SLURP_BIN
+
 export SHADOWPLAY_WINDOW_PICKER="$fake_window"
 export SHADOWPLAY_PICKED_WINDOW="0xff"
 "$helper" settings set filter allowlist >/dev/null
