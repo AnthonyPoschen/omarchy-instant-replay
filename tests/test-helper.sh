@@ -8,8 +8,9 @@ fake_cli="$root/tests/fake-gsr-cli"
 fake_ffmpeg="$root/tests/fake-ffmpeg"
 fake_slurp="$root/tests/fake-slurp"
 fake_window="$root/tests/fake-window-picker"
+fake_notify="$root/tests/fake-omarchy-notification-send"
 
-chmod +x "$helper" "$fake_gsr" "$fake_cli" "$fake_ffmpeg" "$fake_slurp" "$fake_window"
+chmod +x "$helper" "$fake_gsr" "$fake_cli" "$fake_ffmpeg" "$fake_slurp" "$fake_window" "$fake_notify"
 
 work=$(mktemp -d)
 session_pid=""
@@ -25,11 +26,13 @@ export SHADOWPLAY_GSR_BIN="$fake_gsr"
 export SHADOWPLAY_GSR_CLI_BIN="$fake_cli"
 export SHADOWPLAY_FFMPEG_BIN="$fake_ffmpeg"
 export SHADOWPLAY_FOCUSED_MONITOR="DP-1"
-export SHADOWPLAY_NOTIFY=false
+export SHADOWPLAY_NOTIFY=true
 export SHADOWPLAY_NOW=800
 
-mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR" "$XDG_VIDEOS_DIR" "$SHADOWPLAY_FAKE_DIR"
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR" "$XDG_VIDEOS_DIR" "$SHADOWPLAY_FAKE_DIR" "$work/bin"
 chmod 700 "$XDG_RUNTIME_DIR"
+ln -s "$fake_notify" "$work/bin/omarchy-notification-send"
+export PATH="$work/bin:$PATH"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -125,6 +128,11 @@ echo "$status" | jq -e '.encoder.codec == "auto" and .encoder.fps == 60 and .enc
 clip=$(saved)
 [[ $clip == "$replay_dir/Replay-800.mp4" ]] || fail "save returned $clip"
 [[ -e $clip ]] || fail "Clip was not written"
+[[ -r $SHADOWPLAY_FAKE_DIR/notify.args ]] || fail "Save did not send a notification"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/notify.args" "Replay saved"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/notify.args" "--exec"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/notify.args" "/usr/bin/xdg-open"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/notify.args" "$replay_dir"
 [[ ! -e $SHADOWPLAY_FAKE_DIR/saved-seconds ]] || fail "default save should not pass a seconds override"
 [[ -e $SHADOWPLAY_FAKE_DIR/ffmpeg.args ]] || fail "Save should fit the Clip to 1080p"
 [[ -r $SHADOWPLAY_FAKE_DIR/ffmpeg.nice ]] || fail "Save did not record ffmpeg niceness"

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+FAKE_DIR="${SHADOWPLAY_FAKE_DIR:?SHADOWPLAY_FAKE_DIR is not set}"
+mkdir -p "$FAKE_DIR"
+printf '%s\n' "$@" > "$FAKE_DIR/notify.args"

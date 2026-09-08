@@ -346,21 +346,32 @@ sanitize_notify_text() {
 }
 
 notify() {
-  local title body
+  local title body=""
   title=$(sanitize_notify_text "$1" "$NOTIFY_TITLE_MAX")
-  body=$(sanitize_notify_text "${2:-}" "$NOTIFY_BODY_MAX")
+  shift || return 0
+  if (($# > 0)) && [[ $1 != --exec ]]; then
+    body=$(sanitize_notify_text "$1" "$NOTIFY_BODY_MAX")
+    shift
+  fi
   [[ ${SHADOWPLAY_NOTIFY:-true} == true ]] || return 0
+  local -a send=()
   if command -v omarchy-notification-send >/dev/null 2>&1; then
-    if [[ -n $body ]]; then
-      omarchy-notification-send "$title" "$body" || true
-    else
-      omarchy-notification-send "$title" || true
-    fi
-    return
+    send=(omarchy-notification-send)
+  elif command -v notify-send >/dev/null 2>&1; then
+    send=(notify-send)
+  else
+    return 0
   fi
-  if command -v notify-send >/dev/null 2>&1; then
-    notify-send "$title" "$body" || true
+  if [[ -n $body ]]; then
+    send+=("$title" "$body")
+  else
+    send+=("$title")
   fi
+  # --exec is Omarchy's left-click. notify-send has no equivalent we control.
+  if [[ ${1:-} == --exec && ${send[0]} == omarchy-notification-send ]]; then
+    send+=("$@")
+  fi
+  "${send[@]}" || true
 }
 
 load_config() {
@@ -2535,7 +2546,13 @@ cmd_finish_save() {
   rm -f "$live"
   acquire_state_lock
   write_activity "$(activity_value running)" "$(activity_value monitor)" "$(activity_value seconds)" "$(activity_value audio)" "$path"
-  notify "Replay saved" "$path"
+  local clips_dir
+  clips_dir=$(dirname -- "$path")
+  if [[ -d $clips_dir ]]; then
+    notify "Replay saved" "$path" --exec /usr/bin/xdg-open -- "$clips_dir"
+  else
+    notify "Replay saved" "$path"
+  fi
   rm -rf "$job_dir"
 }
 
