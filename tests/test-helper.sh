@@ -588,6 +588,38 @@ if grep -F "app:brave-browser" "$SHADOWPLAY_FAKE_DIR/gsr.args" >/dev/null; then
   fail "window audio should map brave-browser to GSR name Brave"
 fi
 "$helper" stop
+
+# Window audio must use a PipeWire/GSR application name, not a Hyprland class.
+# GSR logs "no audio application with the name com.mitchellh.ghostty" and records silence.
+export SHADOWPLAY_NOW=8360
+rm -f "$segment_index" "$SHADOWPLAY_FAKE_DIR/gsr.args" "$SHADOWPLAY_FAKE_DIR/app-audio"
+unset SHADOWPLAY_APP_AUDIO_JSON
+"$helper" settings set mode follow >/dev/null
+"$helper" settings set filter all >/dev/null
+"$helper" settings set audio window >/dev/null
+write_windows '[{"class":"com.mitchellh.ghostty","pid":20001,"monitor":"DP-1","address":"0xterm","focused":true}]'
+"$helper" start >/dev/null
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "app:ghostty"
+if grep -F "app:com.mitchellh.ghostty" "$SHADOWPLAY_FAKE_DIR/gsr.args" >/dev/null; then
+  fail "window audio must not pass a reverse-DNS window class to GSR"
+fi
+printf 'Brave\nSpotify\n' > "$SHADOWPLAY_FAKE_DIR/app-audio"
+export SHADOWPLAY_SINK_INPUTS_JSON='[{"properties":{"application.name":"Brave","application.process.id":"10001","application.process.binary":"brave"}}]'
+write_windows '[{"class":"brave-browser","pid":10001,"monitor":"DP-1","address":"0xbr","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.subject == "brave-browser" and .phase == "live"' >/dev/null \
+  || fail "window audio should retarget to the browser: $status"
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "app:Brave"
+if grep -F "app:brave-browser" "$SHADOWPLAY_FAKE_DIR/gsr.args" >/dev/null; then
+  fail "window audio should map a playing browser to GSR name Brave, not the window class"
+fi
+if grep -F "app:ghostty" "$SHADOWPLAY_FAKE_DIR/gsr.args" >/dev/null; then
+  fail "switching Subject should recapture the browser app stream, not keep the terminal"
+fi
+[[ -r $segment_index ]] || fail "same-monitor window-audio Subject change should Split"
+unset SHADOWPLAY_SINK_INPUTS_JSON
+rm -f "$SHADOWPLAY_FAKE_DIR/app-audio"
+"$helper" stop
 "$helper" settings set audio desktop >/dev/null
 
 # Follow Capture Extent: default Window, crop, linger gap, Split-on-change

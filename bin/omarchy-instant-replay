@@ -1370,7 +1370,6 @@ launch_recorder() {
       audio=$([[ $audio == window-mic ]] && echo both || echo desktop)
     else
       AUDIO_APP=$(subject_audio_app)
-      [[ -n $AUDIO_APP ]] || AUDIO_APP="${CAPTURE_SUBJECT_CLASS:-$(activity_value subject_class)}"
       AUDIO_APP=${AUDIO_APP%%$'\n'*}
       AUDIO_APP=${AUDIO_APP//|/}
     fi
@@ -1885,10 +1884,11 @@ application_audio_name() {
   SHADOWPLAY_LOOKUP_PID="$pid" SHADOWPLAY_LOOKUP_CLASS="$class" SHADOWPLAY_GSR_BIN="$GSR_BIN" "$PYTHON_BIN" -I -c '
 import json, os, re, subprocess
 
+GENERIC = {"com", "org", "io", "www", "app", "browser", "bin", "client", "desktop", "helper", "sandbox"}
+
 def tokens(value):
     value = (value or "").lower().replace("_", "-")
-    skip = {"com", "org", "io", "www", "app"}
-    return [part for part in re.split(r"[^a-z0-9]+", value) if part and part not in skip]
+    return [part for part in re.split(r"[^a-z0-9]+", value) if part and part not in GENERIC]
 
 def ancestors(pid):
     found = set()
@@ -1904,6 +1904,78 @@ def ancestors(pid):
         except Exception:
             break
     return found
+
+def last_component(klass):
+    klass = (klass or "").strip()
+    if not klass:
+        return ""
+    return klass.split(".")[-1]
+
+def derive_name(klass):
+    last = last_component(klass)
+    if not last:
+        return ""
+    parts = [p for p in re.split(r"[^A-Za-z0-9]+", last) if p]
+    for part in parts:
+        if part.lower() not in GENERIC:
+            return part
+    return last
+
+def gsr_canonical(name, gsr_apps):
+    if not name:
+        return ""
+    lower = name.lower()
+    for app in gsr_apps:
+        if app.lower() == lower:
+            return app
+    return name
+
+def stream_from_props(props):
+    if not isinstance(props, dict):
+        return None
+    name = str(props.get("application.name") or "").strip()
+    node = str(props.get("node.name") or "").strip()
+    if not name:
+        name = node
+    if not name:
+        return None
+    if str(props.get("media.role") or "").lower() == "event":
+        return None
+    return {
+        "name": name,
+        "pid": str(props.get("application.process.id") or "").strip(),
+        "binary": str(props.get("application.process.binary") or "").strip(),
+    }
+
+def streams_from_pactl(items):
+    out = []
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        row = stream_from_props(item.get("properties") or item.get("proplist") or {})
+        if row:
+            out.append(row)
+    return out
+
+def streams_from_pw(data):
+    out = []
+    if not isinstance(data, list):
+        return out
+    for obj in data:
+        if not isinstance(obj, dict):
+            continue
+        info = obj.get("info") or {}
+        props = info.get("props") or {}
+        if not isinstance(props, dict):
+            continue
+        if props.get("media.class") != "Stream/Output/Audio":
+            continue
+        row = stream_from_props(props)
+        if row:
+            out.append(row)
+    return out
 
 pid = str(os.environ.get("SHADOWPLAY_LOOKUP_PID") or "")
 klass = str(os.environ.get("SHADOWPLAY_LOOKUP_CLASS") or "")
@@ -1926,38 +1998,47 @@ if raw:
     print(mapping.get("class:" + key) or mapping.get(klass) or mapping.get(key) or "")
     raise SystemExit
 
-sinks = None
-sink_raw = os.environ.get("SHADOWPLAY_SINK_INPUTS_JSON") or ""
-if sink_raw:
-    try:
-        sinks = json.loads(sink_raw)
-    except Exception:
-        sinks = []
-if sinks is None:
-    try:
-        sinks = json.loads(subprocess.check_output(["pactl", "--format=json", "list", "sink-inputs"], text=True, stderr=subprocess.DEVNULL, timeout=5))
-    except Exception:
-        sinks = []
-if not isinstance(sinks, list):
-    sinks = []
-
 gsr = os.environ.get("SHADOWPLAY_GSR_BIN") or "gpu-screen-recorder"
 try:
     gsr_apps = [line.strip() for line in subprocess.check_output([gsr, "--list-application-audio"], text=True, stderr=subprocess.DEVNULL, timeout=5).splitlines() if line.strip()]
 except Exception:
     gsr_apps = []
 
-class_tokens = set(tokens(klass))
+streams = []
+sink_raw = os.environ.get("SHADOWPLAY_SINK_INPUTS_JSON") or ""
+if sink_raw:
+    try:
+        streams.extend(streams_from_pactl(json.loads(sink_raw)))
+    except Exception:
+        pass
+pw_raw = os.environ.get("SHADOWPLAY_PW_DUMP_JSON") or ""
+if pw_raw:
+    try:
+        streams.extend(streams_from_pw(json.loads(pw_raw)))
+    except Exception:
+        pass
+if not sink_raw and not pw_raw and not os.environ.get("SHADOWPLAY_FAKE_DIR"):
+    try:
+        streams.extend(streams_from_pactl(json.loads(subprocess.check_output(
+            ["pactl", "--format=json", "list", "sink-inputs"],
+            text=True, stderr=subprocess.DEVNULL, timeout=5))))
+    except Exception:
+        pass
+    try:
+        dump = subprocess.check_output(["/usr/bin/pw-dump"], text=True, stderr=subprocess.DEVNULL, timeout=5)
+        if len(dump) > 2000000:
+            dump = ""
+        if dump:
+            streams.extend(streams_from_pw(json.loads(dump)))
+    except Exception:
+        pass
+
+class_tokens = set(tokens(klass)) | set(tokens(last_component(klass)))
 best_name, best_score = "", -1
-for item in sinks:
-    if not isinstance(item, dict):
-        continue
-    props = item.get("properties") or item.get("proplist") or {}
-    if not isinstance(props, dict):
-        continue
-    name = str(props.get("application.name") or "").strip()
-    proc_id = str(props.get("application.process.id") or "").strip()
-    binary = str(props.get("application.process.binary") or "").strip()
+for item in streams:
+    name = item.get("name") or ""
+    proc_id = item.get("pid") or ""
+    binary = item.get("binary") or ""
     if not name:
         continue
     score = 0
@@ -1969,12 +2050,14 @@ for item in sinks:
         overlap = len(class_tokens & (set(tokens(binary)) | set(tokens(name))))
         if overlap:
             score = 50 + overlap * 10
-    if name in gsr_apps:
+    canon = gsr_canonical(name, gsr_apps)
+    if canon in gsr_apps or name in gsr_apps:
         score += 5
+        name = canon
     if score > best_score:
         best_name, best_score = name, score
 if best_score >= 50:
-    print(best_name)
+    print(gsr_canonical(best_name, gsr_apps))
     raise SystemExit
 
 best_name, best_overlap = "", 0
@@ -1985,7 +2068,8 @@ for name in gsr_apps:
 if best_overlap >= 1:
     print(best_name)
     raise SystemExit
-print("")
+
+print(gsr_canonical(derive_name(klass), gsr_apps))
 '
 }
 
@@ -2000,7 +2084,6 @@ subject_audio_app() {
   pid=$(window_pid "$address" "$class" || true)
   name=$(application_audio_name "$pid" "$class" || true)
   name=${name%%$'\n'*}
-  [[ -n $name ]] || name="$class"
   printf '%s' "$name"
 }
 
@@ -2032,6 +2115,10 @@ go_live_on() {
   started=$(activity_value started)
   if buffer_running; then
     if live_capture_differs "$monitor"; then
+      split_and_restart
+      started=$(activity_value started)
+    elif [[ $CONFIG_AUDIO == window || $CONFIG_AUDIO == window-mic ]] && [[ $old_class != "$class" ]]; then
+      # GSR pins -a app:name at start. A new Subject is a new app stream.
       split_and_restart
       started=$(activity_value started)
     elif [[ $old_class != "$class" || $old_addr != "$address" ]]; then
