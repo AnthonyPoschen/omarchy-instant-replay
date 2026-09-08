@@ -445,6 +445,16 @@ clip=$(saved)
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "-ss"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/ffmpeg.args" "50"
 "$helper" stop
+
+# NVENC h264 cannot capture 5120x1440 (DP-1). GSR would exit; use hevc like auto.
+"$helper" settings set codec h264 >/dev/null
+rm -f "$SHADOWPLAY_FAKE_DIR/gsr.args"
+"$helper" start --monitor=DP-1 >/dev/null
+h264_codec=$(awk '$0=="-k"{getline; print; exit}' "$SHADOWPLAY_FAKE_DIR/gsr.args")
+[[ $h264_codec == hevc ]] || fail "h264 cannot capture 5120x1440 DP-1; GSR should get hevc, got ${h264_codec:-missing}"
+"$helper" stop >/dev/null
+"$helper" settings set codec auto >/dev/null
+
 # Follow Filter=All: Armed, Live, Sticky, Linger, Split
 windows_file="$work/windows.json"
 monitors_file="$work/monitors.json"

@@ -660,6 +660,28 @@ die_device_busy() {
   die "$message"
 }
 
+# NVENC h264 tops out at 4096 on a side. DP-1 here is 5120x1440; GSR then
+# exits and the Replay Buffer never goes Live. HEVC is what `auto` picks.
+gsr_codec_for_capture() {
+  local monitor="$1" region="${2:-}" codec="$CONFIG_CODEC" w="" h="" name x y
+  [[ $codec == h264 ]] || { printf '%s' "$codec"; return; }
+  if [[ -n $region ]]; then
+    parse_region_spec "$region" || { printf '%s' "$codec"; return; }
+    w=$REGION_W
+    h=$REGION_H
+  else
+    while IFS='|' read -r name w h x y; do
+      [[ $name == "$monitor" ]] || continue
+      break
+    done < <(monitor_geometry_lines)
+  fi
+  if [[ $w =~ ^[0-9]+$ && $h =~ ^[0-9]+$ ]] && (( w > 4096 || h > 4096 )); then
+    printf 'hevc'
+    return
+  fi
+  printf '%s' "$codec"
+}
+
 list_monitor_lines() {
   "$GSR_BIN" --list-monitors 2>/dev/null || true
 }
@@ -1349,10 +1371,12 @@ launch_recorder() {
   else
     gsr_args+=(-w "$monitor")
   fi
+  local gsr_codec
+  gsr_codec=$(gsr_codec_for_capture "$monitor" "$region")
   gsr_args+=(
     -f "$CONFIG_FPS"
     -fm "$CONFIG_FRAMERATE_MODE"
-    -k "$CONFIG_CODEC"
+    -k "$gsr_codec"
     -bm "$CONFIG_BITRATE_MODE"
     -q "$CONFIG_QUALITY"
     -r "$seconds"
