@@ -73,9 +73,9 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "󰑋"
+    iconComponent: replayMark
     active: root.running || root.savingCount > 0
-    useActiveColor: true
+    useActiveColor: false
     dimmed: !root.running && root.savingCount === 0
     fontSize: Style.font.iconLarge
     opticalSize: Style.bar.iconCanvas + 8
@@ -94,6 +94,34 @@ BarWidget {
         return
       }
       root.primaryAction()
+    }
+  }
+
+  Component {
+    id: replayMark
+    Item {
+      Rectangle {
+        id: disc
+        anchors.centerIn: parent
+        width: Math.min(parent.width, parent.height) * 0.88
+        height: width
+        radius: width / 2
+        color: button.active ? button.activeColor : button.foreground
+
+        Behavior on color {
+          ColorAnimation { duration: 140; easing.type: Easing.OutCubic }
+        }
+      }
+
+      OpticalGlyph {
+        anchors.centerIn: disc
+        width: disc.width * 0.72
+        height: disc.height * 0.72
+        text: "󰑙"
+        fontFamily: button.fontFamily
+        fontSize: disc.width * 0.56
+        color: "#111111"
+      }
     }
   }
 
