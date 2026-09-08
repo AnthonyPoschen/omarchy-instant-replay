@@ -103,7 +103,7 @@ BarWidget {
       Rectangle {
         id: disc
         anchors.centerIn: parent
-        width: Math.min(parent.width, parent.height) * 0.86
+        width: Math.min(parent.width, parent.height) * 0.80
         height: width
         radius: width / 2
         color: button.active ? button.activeColor : button.foreground
