@@ -200,22 +200,42 @@ function normalizeBitrateMode(value) {
 }
 
 function stringList(value) {
-  if (typeof value === "string") {
-    if (!value) return []
-    value = value.split(",")
-  } else if (value && typeof value === "object" && typeof value.length === "number") {
-    var copied = []
-    for (var j = 0; j < value.length; j++) copied.push(value[j])
-    value = copied
-  } else {
-    return []
-  }
   var out = []
-  for (var i = 0; i < value.length; i++) {
-    var item = capString(String(value[i] || "").trim(), 128)
+  function addToken(token) {
+    var item = capString(String(token == null ? "" : token).trim(), 128)
     if (item) out.push(item)
-    if (out.length >= 64) break
   }
+  function addText(text) {
+    var chunks = String(text == null ? "" : text).split("\n")
+    for (var i = 0; i < chunks.length; i++) {
+      var bits = chunks[i].split(",")
+      for (var j = 0; j < bits.length; j++) {
+        addToken(bits[j])
+        if (out.length >= 64) return
+      }
+    }
+  }
+  if (value === undefined || value === null || value === "") return out
+  if (typeof value === "string") {
+    addText(value)
+    return out
+  }
+  if (value && typeof value === "object" && typeof value.length === "number") {
+    if (value.length === 0) return out
+    var asString = String(value)
+    // QML often wraps a CSV as a 1-element list, or indexes a string by character.
+    if (value.length === 1) {
+      addText(value[0])
+      return out
+    }
+    if (asString.length > 1 && value.length === asString.length && String(value[0]).length === 1)
+      addText(asString)
+    else {
+      for (var k = 0; k < value.length && out.length < 64; k++) addText(value[k])
+    }
+    return out
+  }
+  addText(value)
   return out
 }
 
@@ -225,6 +245,28 @@ function defaultBlacklist() {
 
 function encodeList(value) {
   return stringList(value).join(",")
+}
+
+function encodeLines(value) {
+  return stringList(value).join("\n")
+}
+
+// Length and indexing stay in this file. QML `var` properties drop a JS
+// array to its first element on first layout, which hid every class but
+// one until Pick rebuilt the tree.
+function listLength(value) {
+  return stringList(value).length
+}
+
+function listItem(value, index) {
+  var list = stringList(value)
+  var i = parseInt(index, 10)
+  if (isNaN(i) || i < 0 || i >= list.length) return ""
+  return list[i]
+}
+
+function removeListItem(value, index) {
+  return encodeList(replaceListItem(value, index, ""))
 }
 
 function moveListItem(value, index, delta) {

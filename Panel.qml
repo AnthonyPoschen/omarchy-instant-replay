@@ -63,10 +63,10 @@ Panel {
   readonly property var configuredMatchList: {
     var stored = root.settings ? root.settings.matchList : undefined
     if (stored !== undefined && stored !== null)
-      return Model.stringList(stored)
+      return stored
     if (root.status && root.status.matchList !== undefined && root.status.matchList !== null)
-      return Model.stringList(root.status.matchList)
-    return []
+      return root.status.matchList
+    return ""
   }
   readonly property var clipResolutionChoices: Model.clipResolutionOptions()
   readonly property string configuredClipResolution: Model.normalizeClipResolution(setting("clipResolution", "1080p"))
@@ -86,9 +86,9 @@ Panel {
   readonly property var configuredBlacklist: {
     var stored = root.settings ? root.settings.blacklist : undefined
     if (stored !== undefined && stored !== null)
-      return Model.stringList(stored)
+      return stored
     if (root.status && root.status.blacklist !== undefined && root.status.blacklist !== null)
-      return Model.stringList(root.status.blacklist)
+      return root.status.blacklist
     return Model.defaultBlacklist()
   }
 
@@ -518,14 +518,15 @@ Panel {
           height: visible ? implicitHeight : 0
           title: "Allowlist"
           emptyText: "Empty allowlist"
-          itemsCsv: Model.encodeList(root.configuredMatchList)
+          listSource: root.configuredMatchList
+          panelOpen: root.opened
           busy: root.busy
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onRequestPick: root.pickMatchWindow()
-          onEmptyList: root.applyMatchList([])
+          onEmptyList: root.applyMatchList("")
           onRemoveAt: function(index) {
-            root.applyMatchList(Model.replaceListItem(root.configuredMatchList, index, ""))
+            root.applyMatchList(Model.removeListItem(root.configuredMatchList, index))
           }
         }
 
@@ -535,14 +536,15 @@ Panel {
           height: visible ? implicitHeight : 0
           title: "Blacklist"
           emptyText: "Empty blacklist"
-          itemsCsv: Model.encodeList(root.configuredBlacklist)
+          listSource: root.configuredBlacklist
+          panelOpen: root.opened
           busy: root.busy
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onRequestPick: root.pickBlacklistWindow()
-          onEmptyList: root.applyBlacklist([])
+          onEmptyList: root.applyBlacklist("")
           onRemoveAt: function(index) {
-            root.applyBlacklist(Model.replaceListItem(root.configuredBlacklist, index, ""))
+            root.applyBlacklist(Model.removeListItem(root.configuredBlacklist, index))
           }
         }
 
