@@ -801,8 +801,8 @@ pick_window_from_menu() {
     rows+="󰖯"$'\t'"$label"$'\t'"$addr"$'\n'
   done < <(parse_windows)
   [[ -n $rows ]] || die "no windows to pin"
-  selection=$(omarchy-menu-select "Pin window" <<<"$rows") || die "window picker was cancelled"
-  addr=$(cut -f2 <<<"$selection")
+  selection=$(omarchy-menu-select "Pick window" <<<"$rows") || die "window picker was cancelled"
+  addr=${selection##*$'\t'}
   addr=${addr//[[:space:]]/}
   [[ -n $addr ]] || die "window picker was cancelled"
   printf '%s\n' "$addr"
@@ -822,7 +822,7 @@ pick_window_from_click() {
   [[ -n $boxes ]] || return 1
   # slurp -r rejects empty lines. A here-string always appends a newline, which
   # would add a blank line after boxes already end in one.
-  spec=$(printf '%s' "$boxes" | "$slurp" -r) || return 1
+  spec=$(printf '%s' "$boxes" | "$slurp" -r -f '%x,%y %wx%h') || return 1
   spec=$(normalize_region_spec "$spec") || return 1
   parse_region_spec "$spec" || return 1
   rx=$REGION_X; ry=$REGION_Y; rw=$REGION_W; rh=$REGION_H
@@ -845,7 +845,7 @@ pick_window_from_click() {
       fi
     fi
   done < <(parse_windows)
-  [[ -n $best ]] || die "window picker did not hit a window"
+  [[ -n $best ]] || return 1
   printf '%s\n' "$best"
 }
 
@@ -2877,10 +2877,10 @@ cmd_pick_blacklist_window() {
   [[ -n $class ]] || die "could not resolve the picked window"
   append_blacklist_class "$class"
   write_config
-  if [[ $CONFIG_MODE == follow ]] && follow_session_active; then
-    cmd_follow_tick
-  fi
   cmd_settings_show --json
+  if [[ $CONFIG_MODE == follow ]] && follow_session_active; then
+    cmd_follow_tick >/dev/null || true
+  fi
 }
 
 cmd_pick_match_window() {
@@ -2892,10 +2892,10 @@ cmd_pick_match_window() {
   [[ -n $class ]] || die "could not resolve the picked window"
   append_match_list_class "$class"
   write_config
-  if [[ $CONFIG_MODE == follow ]] && follow_session_active; then
-    cmd_follow_tick
-  fi
   cmd_settings_show --json
+  if [[ $CONFIG_MODE == follow ]] && follow_session_active; then
+    cmd_follow_tick >/dev/null || true
+  fi
 }
 
 cmd_pick_region() {

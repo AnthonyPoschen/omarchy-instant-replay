@@ -26,6 +26,7 @@ Panel {
   property string clipCopyStatus: ""
   property var commandQueue: []
   property string pendingAfter: ""
+  property bool pickShouldReopen: false
   property string statusOut: ""
   property string statusErr: ""
   property string monitorsOut: ""
@@ -60,7 +61,7 @@ Panel {
   readonly property var filterChoices: Model.filterOptions()
   readonly property string configuredFilter: Model.normalizeFilter(setting("filter", "all"))
   readonly property var configuredMatchList: {
-    var stored = setting("matchList", undefined)
+    var stored = root.settings ? root.settings.matchList : undefined
     if (stored !== undefined && stored !== null)
       return Model.stringList(stored)
     if (root.status && root.status.matchList !== undefined && root.status.matchList !== null)
@@ -83,7 +84,7 @@ Panel {
   readonly property var framerateModeChoices: Model.framerateModeOptions()
   readonly property var bitrateModeChoices: Model.bitrateModeOptions()
   readonly property var configuredBlacklist: {
-    var stored = setting("blacklist", undefined)
+    var stored = root.settings ? root.settings.blacklist : undefined
     if (stored !== undefined && stored !== null)
       return Model.stringList(stored)
     if (root.status && root.status.blacklist !== undefined && root.status.blacklist !== null)
@@ -227,24 +228,39 @@ Panel {
     root.clipCopyStatus = "Copied"
   }
 
-  function pickWindow() {
+  function beginPick(args) {
+    root.pickShouldReopen = true
     root.close()
-    Qt.callLater(function() { root.enqueueCommand(["pick-window"], "pick") })
+    Qt.callLater(function() {
+      if (root.helperPath === "") {
+        root.pickShouldReopen = false
+        root.open()
+        return
+      }
+      root.enqueueCommand(args, "pick")
+    })
+  }
+
+  function finishPickReopen() {
+    if (!root.pickShouldReopen) return
+    root.pickShouldReopen = false
+    root.open()
+  }
+
+  function pickWindow() {
+    root.beginPick(["pick-window"])
   }
 
   function pickMatchWindow() {
-    root.close()
-    Qt.callLater(function() { root.enqueueCommand(["pick-match-window"], "pick") })
+    root.beginPick(["pick-match-window"])
   }
 
   function pickBlacklistWindow() {
-    root.close()
-    Qt.callLater(function() { root.enqueueCommand(["pick-blacklist-window"], "pick") })
+    root.beginPick(["pick-blacklist-window"])
   }
 
   function pickRegion() {
-    root.close()
-    Qt.callLater(function() { root.enqueueCommand(["pick-region"], "pick") })
+    root.beginPick(["pick-region"])
   }
 
   function pickOutputDir() {
@@ -364,15 +380,16 @@ Panel {
           root.lastError = message !== "" ? message : "Instant Replay command failed."
         } else {
           root.lastError = ""
-          var parsed = Model.parseJson(root.actionOut, null)
-          if (parsed && typeof parsed === "object" && (parsed.region !== undefined || parsed.pinAddress !== undefined || parsed.blacklist !== undefined || parsed.matchList !== undefined)) {
+          var parsed = Model.parseHelperObject(root.actionOut)
+          if (parsed && typeof parsed === "object") {
             var values = {}
             if (parsed.region !== undefined) values.region = String(parsed.region || "")
             if (parsed.pinAddress !== undefined) values.pinAddress = String(parsed.pinAddress || "")
             if (parsed.blacklist !== undefined) values.blacklist = Model.encodeList(parsed.blacklist)
             if (parsed.matchList !== undefined) values.matchList = Model.encodeList(parsed.matchList)
             if (parsed.mode) values.mode = Model.normalizeMode(parsed.mode)
-            root.persistSettings(values)
+            if (values.region !== undefined || values.pinAddress !== undefined || values.blacklist !== undefined || values.matchList !== undefined || values.mode !== undefined)
+              root.persistSettings(values)
           }
         }
         if (root.commandQueue.length > 0) {
@@ -382,7 +399,7 @@ Panel {
         }
         root.busy = false
         root.refresh()
-        if (reopen) root.open()
+        if (reopen || root.pickShouldReopen) root.finishPickReopen()
       })
     }
   }
@@ -495,129 +512,37 @@ Panel {
           onChanged: function(value) { root.applySetting("filter", Model.normalizeFilter(value)) }
         }
 
-        Column {
+        ClassListEditor {
           width: parent.width
-          spacing: Style.space(6)
           visible: root.configuredMode === "follow" && root.configuredFilter === "allowlist"
           height: visible ? implicitHeight : 0
-
-          Text {
-            text: "Allowlist"
-            textFormat: Text.PlainText
-            color: Qt.darker(root.contentForeground, 1.4)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: true
-          }
-
-          Repeater {
-            model: root.configuredMatchList
-            delegate: Row {
-              width: parent.width
-              spacing: Style.space(6)
-
-              Text {
-                width: parent.width - 36 - parent.spacing
-                text: Model.plainLabel(modelData, 128)
-                textFormat: Text.PlainText
-                elide: Text.ElideMiddle
-                color: root.contentForeground
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.body
-                verticalAlignment: Text.AlignVCenter
-                height: 36
-              }
-
-              Button {
-                width: 36
-                text: "×"
-                enabled: !root.busy
-                foreground: root.contentForeground
-                fontFamily: root.contentFontFamily
-                onClicked: root.applyMatchList(Model.replaceListItem(root.configuredMatchList, index, ""))
-              }
-            }
-          }
-
-          Button {
-            width: parent.width
-            text: "Pick window"
-            enabled: !root.busy
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.pickMatchWindow()
-          }
-
-          Button {
-            width: parent.width
-            text: "Empty allowlist"
-            enabled: !root.busy && root.configuredMatchList.length > 0
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.applyMatchList([])
+          title: "Allowlist"
+          emptyText: "Empty allowlist"
+          itemsCsv: Model.encodeList(root.configuredMatchList)
+          busy: root.busy
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          onRequestPick: root.pickMatchWindow()
+          onEmptyList: root.applyMatchList([])
+          onRemoveAt: function(index) {
+            root.applyMatchList(Model.replaceListItem(root.configuredMatchList, index, ""))
           }
         }
 
-        Column {
+        ClassListEditor {
           width: parent.width
-          spacing: Style.space(6)
           visible: root.configuredMode === "follow" && root.configuredFilter === "denylist"
           height: visible ? implicitHeight : 0
-
-          Text {
-            text: "Blacklist"
-            textFormat: Text.PlainText
-            color: Qt.darker(root.contentForeground, 1.4)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: true
-          }
-
-          Repeater {
-            model: root.configuredBlacklist
-            delegate: Row {
-              width: parent.width
-              spacing: Style.space(6)
-
-              Text {
-                width: parent.width - 36 - parent.spacing
-                text: Model.plainLabel(modelData, 128)
-                textFormat: Text.PlainText
-                elide: Text.ElideMiddle
-                color: root.contentForeground
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.body
-                verticalAlignment: Text.AlignVCenter
-                height: 36
-              }
-
-              Button {
-                width: 36
-                text: "×"
-                enabled: !root.busy
-                foreground: root.contentForeground
-                fontFamily: root.contentFontFamily
-                onClicked: root.applyBlacklist(Model.replaceListItem(root.configuredBlacklist, index, ""))
-              }
-            }
-          }
-
-          Button {
-            width: parent.width
-            text: "Pick window"
-            enabled: !root.busy
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.pickBlacklistWindow()
-          }
-
-          Button {
-            width: parent.width
-            text: "Empty blacklist"
-            enabled: !root.busy && root.configuredBlacklist.length > 0
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.applyBlacklist([])
+          title: "Blacklist"
+          emptyText: "Empty blacklist"
+          itemsCsv: Model.encodeList(root.configuredBlacklist)
+          busy: root.busy
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          onRequestPick: root.pickBlacklistWindow()
+          onEmptyList: root.applyBlacklist([])
+          onRemoveAt: function(index) {
+            root.applyBlacklist(Model.replaceListItem(root.configuredBlacklist, index, ""))
           }
         }
 

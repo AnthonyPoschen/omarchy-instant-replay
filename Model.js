@@ -29,6 +29,21 @@ function parseJson(text, fallback) {
   }
 }
 
+function parseHelperObject(text) {
+  var parsed = parseJson(text, null)
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+    return parsed
+  var s = String(text || "")
+  var start = s.indexOf("{")
+  var end = s.lastIndexOf("}")
+  if (start < 0 || end <= start)
+    return null
+  parsed = parseJson(s.slice(start, end + 1), null)
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+    return parsed
+  return null
+}
+
 function parseStatus(text) {
   var status = parseJson(text, {})
   if (!status || typeof status !== "object") status = {}
@@ -188,8 +203,13 @@ function stringList(value) {
   if (typeof value === "string") {
     if (!value) return []
     value = value.split(",")
+  } else if (value && typeof value === "object" && typeof value.length === "number") {
+    var copied = []
+    for (var j = 0; j < value.length; j++) copied.push(value[j])
+    value = copied
+  } else {
+    return []
   }
-  if (!Array.isArray(value)) return []
   var out = []
   for (var i = 0; i < value.length; i++) {
     var item = capString(String(value[i] || "").trim(), 128)
