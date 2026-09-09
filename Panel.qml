@@ -821,6 +821,16 @@ Panel {
             onChanged: function(value) { root.applySetting("clipScale", Model.normalizeClipScale(value)) }
           }
 
+          Toggle {
+            width: parent.width
+            label: "Cursor"
+            description: "Include the pointer in the Replay Buffer."
+            checked: root.configuredCursor
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.applySetting("cursor", !root.configuredCursor)
+          }
+
           Button {
             width: parent.width
             text: root.hotkeyCopyStatus !== "" ? root.hotkeyCopyStatus : "Copy keybinds"
@@ -891,16 +901,6 @@ Panel {
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
             onChanged: function(value) { root.applySetting("bitrateMode", Model.normalizeBitrateMode(value)) }
-          }
-
-          Toggle {
-            width: parent.width
-            label: "Cursor"
-            description: "Include the pointer in the Replay Buffer."
-            checked: root.configuredCursor
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.applySetting("cursor", !root.configuredCursor)
           }
         }
       }

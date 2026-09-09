@@ -153,7 +153,7 @@ Only one KMS screen capture can run at a time. While the buffer is on, `omarchy 
 
 ## Settings
 
-Left-click the bar icon. Save clip and Open clips stay on the main surface. Mode is under Recording mode; Replay Window, audio, output folder, resolution, and layout are under Config; encoder knobs are under Encoder. All three sections start collapsed.
+Left-click the bar icon. Save clip and Open clips stay on the main surface. Mode is under Recording mode; Replay Window, audio, output folder, resolution, layout, and cursor are under Config; encoder knobs are under Encoder. All three sections start collapsed.
 
 Match List, Blacklist, and Pin target apply while Live. Mode, Buffer Target, Replay Window, audio, and encoder knobs Split if Live.
 
