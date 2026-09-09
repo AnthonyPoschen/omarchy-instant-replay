@@ -4,7 +4,12 @@ Save a clip of what just happened, even though you never started a recording.
 
 It keeps a rolling buffer of your screen. You save when you want the file. The buffer keeps running. Same idea as NVIDIA ShadowPlay, using the GPU Screen Recorder Omarchy already has. Nothing leaves this machine.
 
-A new install is already on: focused monitor, last 60 seconds, desktop audio, 1080p. Open Settings if you want something else.
+What you can buffer:
+
+- **Monitor** — the whole screen
+- **Follow focused window** — the window in front of you, and it follows as you switch windows. You get that window, not the entire monitor.
+- **Window** — one window you pick. It stays on that window even if you look away.
+- **Custom** — a rectangle you draw
 
 ## Install
 
