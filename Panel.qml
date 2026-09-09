@@ -25,6 +25,7 @@ Panel {
   property bool extrasModeOpen: false
   property bool extrasConfigOpen: false
   property string hotkeyCopyStatus: ""
+  property string clipCopyStatus: ""
   property var commandQueue: []
   property string pendingAfter: ""
   property bool pickShouldReopen: false
@@ -219,6 +220,13 @@ Panel {
   function copyHotkeys() {
     Quickshell.execDetached(["/usr/bin/wl-copy", "--", Model.hotkeyBindSnippet()])
     root.hotkeyCopyStatus = "Copied"
+  }
+
+  function copyLastClip() {
+    var path = root.lastClipPath()
+    if (path === "") return
+    Quickshell.execDetached(["/usr/bin/wl-copy", "--", path])
+    root.clipCopyStatus = "Copied"
   }
 
   function lastClipPath() {
@@ -579,7 +587,7 @@ Panel {
             spacing: Style.space(8)
 
             Text {
-              width: parent.width - omacutButton.width - parent.spacing
+              width: parent.width - copyClipButton.width - omacutButton.width - parent.spacing * 2
               text: Model.plainLabel(root.status.lastClip, 256)
               textFormat: Text.PlainText
               elide: Text.ElideMiddle
@@ -590,10 +598,28 @@ Panel {
               height: omacutButton.height
             }
 
+            PanelActionButton {
+              id: copyClipButton
+              iconText: "󰆏"
+              tooltipText: root.clipCopyStatus !== "" ? root.clipCopyStatus : "Copy path"
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              size: omacutButton.width
+              fontSize: Style.font.iconLarge
+              enabled: !root.busy
+              onClicked: root.copyLastClip()
+            }
+
             Button {
               id: omacutButton
-              implicitWidth: Style.font.iconLarge + horizontalPadding * 2
-              implicitHeight: Style.font.iconLarge + verticalPadding * 2
+              implicitWidth: Style.space(28)
+              implicitHeight: Style.space(28)
+              horizontalPadding: 0
+              verticalPadding: 0
+              leftPadding: 0
+              rightPadding: 0
+              topPadding: 0
+              bottomPadding: 0
               text: ""
               tooltipText: "omacut"
               enabled: !root.busy
@@ -602,9 +628,7 @@ Panel {
               onClicked: root.openLastClipInOmacut()
 
               Image {
-                anchors.centerIn: parent
-                width: Style.font.iconLarge
-                height: Style.font.iconLarge
+                anchors.fill: parent
                 fillMode: Image.PreserveAspectFit
                 sourceSize.width: Math.round(width * Screen.devicePixelRatio)
                 sourceSize.height: Math.round(height * Screen.devicePixelRatio)
