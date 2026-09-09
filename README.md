@@ -114,7 +114,7 @@ Changing clip resolution or layout does not Split.
 
 ## Hotkeys
 
-Plugins cannot write Hyprland binds. Copy keybinds from Settings, or paste this next to your other `bindd` lines. Save is live. The rest stay commented until you want them.
+Plugins cannot write Hyprland binds. Copy Hyprland keybinds from Settings, or paste this next to your other `bindd` lines. Save is live. The rest stay commented until you want them.
 
 ```hyprlang
 bindd = SUPER ALT, R, Save replay, exec, omarchy-shell io.github.anthonyposchen.instant-replay save

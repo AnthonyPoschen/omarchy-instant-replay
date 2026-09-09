@@ -739,7 +739,7 @@ Panel {
 
           Button {
             width: parent.width
-            text: root.hotkeyCopyStatus !== "" ? root.hotkeyCopyStatus : "Copy keybinds"
+            text: root.hotkeyCopyStatus !== "" ? root.hotkeyCopyStatus : "Copy Hyprland keybinds"
             enabled: !root.busy
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
