@@ -59,6 +59,8 @@ Panel {
   readonly property var monitorChoices: Model.monitorOptions(monitors)
   readonly property var secondsChoices: Model.secondsOptions()
   readonly property var audioChoices: Model.audioOptions(root.configuredMode)
+  readonly property string configuredAudioOutput: Model.audioOutput(root.configuredAudio)
+  readonly property bool configuredAudioMic: Model.audioMic(root.configuredAudio)
   readonly property var filterChoices: Model.filterOptions()
   readonly property string configuredFilter: Model.normalizeFilter(setting("filter", "all"))
   readonly property var configuredMatchList: {
@@ -697,12 +699,24 @@ Panel {
           ReplayDropdown {
             id: audioDropdown
             width: parent.width
-            label: "Audio"
-            value: root.configuredAudio
+            label: "Output"
+            value: root.configuredAudioOutput
             options: root.audioChoices
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
-            onChanged: function(value) { root.applySetting("audio", Model.normalizeAudio(value)) }
+            onChanged: function(value) {
+              root.applySetting("audio", Model.combineAudio(value, root.configuredAudioMic))
+            }
+          }
+
+          Toggle {
+            width: parent.width
+            label: "Microphone"
+            description: "Record the default input."
+            checked: root.configuredAudioMic
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.applySetting("audio", Model.combineAudio(root.configuredAudioOutput, !root.configuredAudioMic))
           }
 
           ReplayDropdown {

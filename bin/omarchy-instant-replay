@@ -113,7 +113,7 @@ Usage:
   $PROGRAM settings show [--json]
   $PROGRAM settings set monitor <name|>
   $PROGRAM settings set seconds <15-7200>
-  $PROGRAM settings set audio <none|desktop|both|window|window-mic>
+  $PROGRAM settings set audio <none|desktop|both|window|window-mic|mic>
   $PROGRAM settings set mode <monitor|follow|pin|region>
   $PROGRAM settings set filter <all|allowlist|denylist>
   $PROGRAM settings set matchList <class,regex,...>
@@ -192,6 +192,13 @@ json_bool() {
   else
     printf 'false'
   fi
+}
+
+is_audio() {
+  case "${1:-}" in
+  none|desktop|both|window|window-mic|mic) return 0 ;;
+  *) return 1 ;;
+  esac
 }
 
 json_string_array() {
@@ -388,7 +395,7 @@ load_config() {
       [[ $value =~ ^[0-9]+$ ]] && CONFIG_SECONDS="$value"
       ;;
     audio)
-      [[ $value == none || $value == desktop || $value == both || $value == window || $value == window-mic ]] && CONFIG_AUDIO="$value"
+      is_audio "$value" && CONFIG_AUDIO="$value"
       ;;
     mode)
       [[ $value == monitor || $value == follow || $value == pin || $value == region ]] && CONFIG_MODE="$value"
@@ -1086,7 +1093,7 @@ apply_start_flags() {
       ;;
     --audio=*)
       local value="${arg#--audio=}"
-      [[ $value == none || $value == desktop || $value == both || $value == window || $value == window-mic ]] || die "audio must be none, desktop, both, window, or window-mic"
+      is_audio "$value" || die "audio must be none, desktop, both, window, window-mic, or mic"
       CONFIG_AUDIO="$value"
       ;;
     --region=*)
@@ -1428,6 +1435,7 @@ launch_recorder() {
   window-mic)
     gsr_args+=(-a "app:${AUDIO_APP}|default_input" -ac aac)
     ;;
+  mic) gsr_args+=(-a default_input -ac aac) ;;
   none) ;;
   *) die "invalid audio setting: $audio" ;;
   esac
@@ -2869,7 +2877,7 @@ cmd_settings_set() {
     [[ $CONFIG_SECONDS == "$value" ]] || die "seconds must be between $MIN_SECONDS and $MAX_SECONDS"
     ;;
   audio)
-    [[ $value == none || $value == desktop || $value == both || $value == window || $value == window-mic ]] || die "audio must be none, desktop, both, window, or window-mic"
+    is_audio "$value" || die "audio must be none, desktop, both, window, window-mic, or mic"
     CONFIG_AUDIO="$value"
     ;;
   mode)

@@ -208,6 +208,15 @@ echo "$status" | jq -e '.monitor == "HDMI-A-1" and .seconds == 120 and .audio ==
   || fail "status after retargeted start: $status"
 "$helper" stop
 
+"$helper" start --monitor=DP-1 --audio=mic >/dev/null
+assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "default_input"
+if grep -F -- "default_output" "$SHADOWPLAY_FAKE_DIR/gsr.args" >/dev/null; then
+  fail "audio=mic should not capture desktop output"
+fi
+status=$("$helper" status --json)
+echo "$status" | jq -e '.audio == "mic"' >/dev/null || fail "mic-only status: $status"
+"$helper" stop
+
 if "$helper" start --monitor=NOPE >/dev/null 2>"$work/err"; then
   fail "start accepted a missing monitor"
 fi

@@ -54,9 +54,9 @@
         "key": "audio",
         "type": "enum",
         "label": "Audio",
-        "options": ["none", "desktop", "both"],
+        "options": ["none", "desktop", "both", "mic"],
         "defaultValue": "desktop",
-        "description": "none records video only. desktop is system audio. both mixes system audio and the microphone. Follow and Pin also offer window and window-mic."
+        "description": "none is silent. desktop is system output. both adds the microphone. mic is microphone only. Follow and Window also offer window and window-mic."
       },
       {
         "key": "clipResolution",

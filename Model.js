@@ -128,8 +128,33 @@ function parseMonitors(text) {
 
 function normalizeAudio(value) {
   var audio = String(value || "desktop")
-  if (audio === "none" || audio === "desktop" || audio === "both" || audio === "window" || audio === "window-mic") return audio
+  if (audio === "none" || audio === "desktop" || audio === "both" || audio === "window" || audio === "window-mic" || audio === "mic") return audio
   return "desktop"
+}
+
+function audioOutput(audio) {
+  switch (normalizeAudio(audio)) {
+  case "none":
+  case "mic":
+    return "none"
+  case "window":
+  case "window-mic":
+    return "window"
+  default:
+    return "desktop"
+  }
+}
+
+function audioMic(audio) {
+  var value = normalizeAudio(audio)
+  return value === "mic" || value === "both" || value === "window-mic"
+}
+
+function combineAudio(output, mic) {
+  var out = String(output || "desktop")
+  if (out === "window") return mic ? "window-mic" : "window"
+  if (out === "none") return mic ? "mic" : "none"
+  return mic ? "both" : "desktop"
 }
 
 function normalizeMode(value) {
@@ -351,12 +376,10 @@ function formatReplayLength(seconds) {
 function audioOptions(mode) {
   var options = [
     { value: "none", label: "No audio" },
-    { value: "desktop", label: "Desktop audio" },
-    { value: "both", label: "Desktop + microphone" }
+    { value: "desktop", label: "Desktop" }
   ]
   if (mode === "follow" || mode === "pin") {
-    options.push({ value: "window", label: "Window audio" })
-    options.push({ value: "window-mic", label: "Window + microphone" })
+    options.push({ value: "window", label: "Window" })
   }
   return options
 }
