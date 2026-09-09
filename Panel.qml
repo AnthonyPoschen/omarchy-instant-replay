@@ -699,7 +699,7 @@ Panel {
           ReplayDropdown {
             id: audioDropdown
             width: parent.width
-            label: "Output"
+            label: "Audio to capture"
             value: root.configuredAudioOutput
             options: root.audioChoices
             foreground: root.contentForeground

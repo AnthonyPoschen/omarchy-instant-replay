@@ -84,7 +84,7 @@ Right-click the bar icon. Save when Live. Start when not.
 Left-click the bar icon. Save clip and Open clips stay on the main surface with the power switch. Mode, Filter, and Buffer Target sit in **Recording region**. Replay Window, audio, output folder, Clip Resolution, Clip Layout, Cursor, and keybinds sit in **Replay**. Encoder knobs sit in **Encoder**. All three sections are collapsed by default — not a nav menu. Match List, Blacklist, and Pin target apply while Live. Mode, Buffer Target, Replay Window length, audio, and encoder knobs Split if Live. The last session (Live, Waiting, or Off) is restored when the shell loads. A new install starts Enabled. Follow Save is always the Subject rectangle. Pin with no window yet pins the focused window and goes Live; if none (or only Omarchy chrome), Enable fails. Selecting Follow or Pin in Settings while Off does not start a session.
 
 **Audio**:
-What the Clip hears. **Output** is none, desktop, or (Follow/Window) the Subject's app stream. **Microphone** is a separate toggle for the default input. Output none plus Microphone on is microphone only. Monitor Mode and Region Mode have no Window output. Changing output or microphone Splits. A Follow Subject whose app stream changes Splits even on the same monitor.
+What the Clip hears. **Audio to capture** is none, desktop, or (Follow/Window) the Subject's app stream. **Microphone** is a separate toggle for the default input. Audio none plus Microphone on is microphone only. Monitor Mode and Region Mode have no Window option. Changing audio or microphone Splits. A Follow Subject whose app stream changes Splits even on the same monitor.
 _Avoid_: forcing system audio when the user asked for the game
 
 **Clip Resolution**:

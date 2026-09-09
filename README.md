@@ -63,7 +63,7 @@ If you change monitor, mode, audio, or length while it is recording, the buffer 
 
 Under **Replay**:
 
-- **Output** — none, desktop, or the tracked window (Follow and Window modes). Window keeps Discord out of the clip.
+- **Audio to capture** — none, desktop, or the tracked window (Follow and Window modes). Window keeps Discord out of the clip.
 - **Microphone** — default input. On with Output none is microphone only.
 - **Replay Window** — how many seconds Save keeps (default 60)
 - **Resolution / Layout** — size and fit of the saved file, not the capture
