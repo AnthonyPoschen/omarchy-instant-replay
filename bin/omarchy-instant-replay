@@ -2379,7 +2379,9 @@ cmd_follow_tick() {
   [[ $CONFIG_FILTER == allowlist ]] && needs_window=true
 
   if [[ $phase == live ]]; then
-    if buffer_running && [[ -n $subject_class || -n $subject_address ]]; then
+    # Linger only when the Subject is gone. A filter/list change that
+    # disallows a still-living Subject must not keep encoding the output.
+    if buffer_running && [[ $subject_alive != true ]] && [[ -n $subject_class || -n $subject_address ]]; then
       enter_linger
     elif [[ $needs_window == true ]]; then
       go_waiting
@@ -2390,6 +2392,10 @@ cmd_follow_tick() {
   fi
 
   if [[ $phase == linger ]]; then
+    if [[ $needs_window == true && $subject_alive == true ]]; then
+      go_waiting
+      return 0
+    fi
     local now
     now=$(now_epoch)
     if [[ $linger_until =~ ^[0-9]+$ ]] && (( now >= linger_until )); then

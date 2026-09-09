@@ -1024,6 +1024,21 @@ echo "$status" | jq -e '.running == false and .phase == "waiting"' >/dev/null \
   || fail "allowlist Linger expiry should Wait, not record the monitor: $status"
 [[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "allowlist Wait left the recorder Live"
 
+"$helper" stop >/dev/null
+"$helper" settings set filter all >/dev/null
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
+export SHADOWPLAY_NOW=11400
+"$helper" start >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "firefox"' >/dev/null \
+  || fail "Filter=All should record firefox: $status"
+"$helper" settings set matchList "kitty" >/dev/null
+"$helper" settings set filter allowlist >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.running == false and .phase == "waiting"' >/dev/null \
+  || fail "switching to Allowlist with no listed window should Wait immediately: $status"
+[[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "switching to Allowlist kept recording the monitor"
+
 "$helper" stop
 
 # Pin Mode: window picker, glance does not follow, move-output Split.
