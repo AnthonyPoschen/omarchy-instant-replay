@@ -1,10 +1,8 @@
 # Instant Replay
 
-Keep the last few seconds of your screen on Omarchy, then save them after something worth keeping already happened.
+Save a clip of what just happened, even though you never started a recording.
 
-You do not hit record before a play. The plugin holds a rolling buffer in the background. When you want the moment, one action writes a video file and the buffer keeps going.
-
-That is the same idea as NVIDIA ShadowPlay or Xbox Game DVR, built on the GPU Screen Recorder Omarchy already ships. Capture and save stay on this machine. The plugin does not make network requests.
+Instant Replay holds a rolling buffer of your screen in the background. One action writes the last N seconds to a file and the buffer keeps running. Same idea as NVIDIA ShadowPlay or Xbox Game DVR, using the GPU Screen Recorder Omarchy already ships. Capture and save stay on this machine. No network.
 
 A new install starts enabled on your focused monitor, last 60 seconds, desktop audio, 1080p clips. Open Settings from the bar if you want a different slice of the screen, only the game's sound, or a longer window.
 
