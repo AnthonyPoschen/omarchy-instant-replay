@@ -736,7 +736,7 @@ Panel {
         }
 
         ExtraGroup {
-          title: "Config"
+          title: "Replay"
           open: root.extrasConfigOpen
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
