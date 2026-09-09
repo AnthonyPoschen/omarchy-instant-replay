@@ -50,8 +50,8 @@ What happens after that:
 
 - The focused window becomes the **Subject** if the Filter allows it, and the buffer goes **Live**.
 - **Denylist** does not scan for “any open game” at start. If Discord is focused when you start, the buffer still goes Live on that monitor (full output) until you focus a window that is not on the Blacklist.
-- **Allowlist** can take an already-open listed game even while Discord is focused. The focused allowed window still wins when there is one.
-- Alt-tab to a blocked window does not retarget (**Sticky**). The buffer stays on the game. When the game closes, it **Lingers** on that monitor for one Replay Window, then stays Live on that output until a matching window returns.
+- **Allowlist** can take an already-open listed game even while Discord is focused. The focused allowed window still wins when there is one. If none of the listed windows exist, it **Waits** (toggle on, not recording) until one appears. It does not record the whole monitor.
+- Alt-tab to a blocked window does not retarget (**Sticky**). The buffer stays on the game. When the game closes, it **Lingers** on that monitor for one Replay Window. Allowlist then Waits; other filters stay Live on that output until a matching window returns.
 - Save is cropped to the Subject rectangle. A fullscreen game is the same as the monitor. Window audio is that app's PipeWire stream, not system output.
 
 Pin is simpler if you only ever want one window. Monitor Mode is the whole output and has no Window audio option.
@@ -66,15 +66,15 @@ Default. Pins one output: a named connector (`DP-1`, `HDMI-A-1`, …) or whichev
 
 ### Follow focused window
 
-Tracks the focused window among those the Filter allows. Turning the switch on starts a Replay Buffer immediately. A matching window becomes the Subject; otherwise the buffer stays Live on the current monitor.
+Tracks the focused window among those the Filter allows. Turning the switch on starts a Replay Buffer immediately, except **Allowlist** with no listed window: that **Waits** until a match exists.
 
 - **All** — any window except built-in Omarchy chrome (bar, launcher, lock). Emptying the Denylist is not the same as All.
-- **Allowlist** — only classes you pick. The focused allowed window is the Subject. If none is focused, the first open match in list order is.
+- **Allowlist** — only classes you pick. The focused allowed window is the Subject. If none is focused, the first open match in list order is. If none of those windows exist, it Waits (not Recording) instead of capturing the monitor.
 - **Denylist** — skip classes you pick. Ships with Omarchy chrome; you can remove those entries. It does not pick some other open game for you.
 
 The focused allowed window is the **Subject**. Alt-tab to Discord does not retarget (Sticky). An allowed window on another monitor is a **Split**: Save still writes one Clip. A new Subject on the same monitor dumps the current ring and Save stitches those pieces.
 
-If the Subject closes, the buffer **Lingers** on that monitor for one Replay Window, then stays Live on that output until a matching window returns.
+If the Subject closes, the buffer **Lingers** on that monitor for one Replay Window. Allowlist then Waits until a listed window returns; other filters stay Live on that output.
 
 Follow Save is always cropped to the Subject rectangle. A fullscreen Subject is the same as the monitor. Set Audio to Window audio if the Clip should hear the game and not the rest of the desktop.
 

@@ -427,10 +427,14 @@ function modeStatusName(mode) {
 }
 
 function sessionIsOn(status) {
-  return !!(status && status.running === true)
+  if (!status) return false
+  return status.running === true || status.phase === "waiting" || status.phase === "linger" || status.linger === true
 }
 
 function statusHeadline(status, mode) {
+  if (!status) return "Disabled"
+  if (String(status.phase || "") === "waiting") return "Waiting"
+  if (status.running === true) return "Recording"
   if (!sessionIsOn(status)) return "Disabled"
   return "Recording"
 }
@@ -439,6 +443,7 @@ function statusDetail(status) {
   if (!status) return ""
   var saving = savingLabel(status.saving)
   if (saving) return saving
+  if (String(status.phase || "") === "waiting") return "no window to record"
   if (!sessionIsOn(status)) return ""
   return modeStatusName(status.mode) + " · last " + formatReplayLength(status.seconds)
 }

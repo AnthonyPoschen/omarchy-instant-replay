@@ -49,10 +49,13 @@ An ordered list of window classes used when Follow Mode is on Allowlist. People 
 An ordered list of window classes used when Follow Mode is on Denylist. People add entries by picking a window (click it). Rules match Hyprland `class` / `initialClass`. Ships pre-populated with Omarchy chrome: bar, launcher, lock screen. The user can remove entries or empty it.
 
 **Live**:
-The Replay Buffer is encoding. Enable always starts a Replay Buffer. There is no idle watching state.
+The Replay Buffer is encoding. Enable starts a Replay Buffer except Follow Allowlist with no Subject.
+
+**Waiting**:
+Follow Allowlist is on, but no listed window exists. The Replay Buffer is not encoding. The panel says Waiting, not Recording. A matching window going Live is what starts capture. This is not a silent full-output recording.
 
 **Linger**:
-After the last Subject is destroyed, dump its ring as a Segment (so Save keeps that window crop), then stay Live on that Buffer Target for one Replay Window with a full-output crop. A matching window that reopens reclaims the Subject; same monitor is not a Split. The linger gap and the reopen sit in the same buffer, including whatever was on that output in between. If nothing returns, keep Live on that Buffer Target with a full-output crop until a matching window returns or the user disables.
+After the last Subject is destroyed, dump its ring as a Segment (so Save keeps that window crop), then stay Live on that Buffer Target for one Replay Window with a full-output crop. A matching window that reopens reclaims the Subject; same monitor is not a Split. The linger gap and the reopen sit in the same buffer, including whatever was on that output in between. If nothing returns, Follow Allowlist goes Waiting; other Follow filters stay Live on that Buffer Target until a matching window returns or the user disables.
 
 **Sticky Subject**:
 When the focused window is not allowed to become the Subject, keep the last Subject. Alt-tab to Discord does not retarget. Linger is what happens after that window is gone.
@@ -78,7 +81,7 @@ A Hyprland bind the user installs themselves. The plugin cannot write their bind
 Right-click the bar icon. Save when Live. Start when not.
 
 **Settings**:
-Left-click the bar icon. Save clip and Open clips stay on the main surface with the power switch. Mode, Filter, and Buffer Target sit in **Recording region**. Replay Window, audio, output folder, Clip Resolution, Clip Layout, Cursor, and keybinds sit in **Replay**. Encoder knobs sit in **Encoder**. All three sections are collapsed by default — not a nav menu. Match List, Blacklist, and Pin target apply while Live. Mode, Buffer Target, Replay Window length, audio, and encoder knobs Split if Live. The last session (Live or Off) is restored when the shell loads. A new install starts Enabled. Follow Save is always the Subject rectangle. Pin with no window yet pins the focused window and goes Live; if none (or only Omarchy chrome), Enable fails. Selecting Follow or Pin in Settings while Off does not start a session.
+Left-click the bar icon. Save clip and Open clips stay on the main surface with the power switch. Mode, Filter, and Buffer Target sit in **Recording region**. Replay Window, audio, output folder, Clip Resolution, Clip Layout, Cursor, and keybinds sit in **Replay**. Encoder knobs sit in **Encoder**. All three sections are collapsed by default — not a nav menu. Match List, Blacklist, and Pin target apply while Live. Mode, Buffer Target, Replay Window length, audio, and encoder knobs Split if Live. The last session (Live, Waiting, or Off) is restored when the shell loads. A new install starts Enabled. Follow Save is always the Subject rectangle. Pin with no window yet pins the focused window and goes Live; if none (or only Omarchy chrome), Enable fails. Selecting Follow or Pin in Settings while Off does not start a session.
 
 **Audio**:
 What the Clip hears. **Desktop** is the system output. **Window** is the Subject's application stream (GPU Screen Recorder `app:name`, matched from the window pid/class and PipeWire), so Discord and music stay out. **+ microphone** mixes in the default input. Monitor Mode and Region Mode have no Window option. Changing audio Splits. A Follow Subject whose app stream changes Splits even on the same monitor.

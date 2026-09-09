@@ -2166,7 +2166,16 @@ subject_audio_app() {
 follow_session_active() {
   local phase
   phase=$(activity_value phase)
-  [[ $phase == live || $phase == linger || $phase == armed ]]
+  [[ $phase == live || $phase == linger || $phase == waiting || $phase == armed ]]
+}
+
+# Follow Allowlist with no Subject: stay on, do not encode the whole output.
+go_waiting() {
+  if buffer_running; then
+    stop_recorder
+    discard_all_segments
+  fi
+  write_activity false "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" waiting "-" "-" "-" "-"
 }
 
 # Session on with no Subject: keep encoding the current Buffer Target.
@@ -2366,9 +2375,14 @@ cmd_follow_tick() {
     fi
   fi
 
+  local needs_window=false
+  [[ $CONFIG_FILTER == allowlist ]] && needs_window=true
+
   if [[ $phase == live ]]; then
     if buffer_running && [[ -n $subject_class || -n $subject_address ]]; then
       enter_linger
+    elif [[ $needs_window == true ]]; then
+      go_waiting
     elif ! buffer_running; then
       go_live_on_monitor "$target_mon"
     fi
@@ -2379,12 +2393,20 @@ cmd_follow_tick() {
     local now
     now=$(now_epoch)
     if [[ $linger_until =~ ^[0-9]+$ ]] && (( now >= linger_until )); then
-      go_live_on_monitor "$target_mon"
+      if [[ $needs_window == true ]]; then
+        go_waiting
+      else
+        go_live_on_monitor "$target_mon"
+      fi
     fi
     return 0
   fi
 
-  go_live_on_monitor "$target_mon"
+  if [[ $needs_window == true ]]; then
+    go_waiting
+  else
+    go_live_on_monitor "$target_mon"
+  fi
 }
 
 # Pin with no stored window: take the focused client, like Monitor pins the

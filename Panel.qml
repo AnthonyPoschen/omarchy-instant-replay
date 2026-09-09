@@ -40,7 +40,7 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property bool running: status.running === true
   readonly property int savingCount: Model.boundedInteger(status.saving, 0, 0, 99)
-  readonly property bool sessionOn: running
+  readonly property bool sessionOn: running || status.phase === "waiting" || status.phase === "linger" || status.linger === true
   readonly property string configuredMonitor: String(setting("monitor", "") || "")
   readonly property int configuredSeconds: Model.boundedInteger(setting("seconds", 60), 60, Model.minSeconds(), Model.maxSeconds())
   readonly property string configuredAudio: {
@@ -317,7 +317,7 @@ Panel {
     if (root.running) return
     var phase = String(root.status.phase || "")
     if (phase === "off") return
-    if (phase === "live" || phase === "linger" || phase === "armed" || phase === "")
+    if (phase === "live" || phase === "linger" || phase === "waiting" || phase === "armed" || phase === "")
       root.startBuffer()
   }
 

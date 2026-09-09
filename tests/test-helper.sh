@@ -933,9 +933,9 @@ write_windows '[{"class":"discord","title":"Friends","monitor":"DP-1","address":
 export SHADOWPLAY_NOW=10000
 "$helper" start >/dev/null
 status=$("$helper" status --json)
-echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "DP-1" and .subject == null' >/dev/null \
-  || fail "allowlist should record the monitor on a non-match: $status"
-[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "allowlist Enable did not start a Replay Buffer"
+echo "$status" | jq -e '.running == false and .phase == "waiting" and .subject == null' >/dev/null \
+  || fail "allowlist with no match should wait, not record the monitor: $status"
+[[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "allowlist Enable recorded the monitor with no Subject"
 
 write_windows '[{"class":"firefox","title":"Mozilla Firefox","initialClass":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
 status=$("$helper" tick)
@@ -995,8 +995,9 @@ write_windows '[{"class":"discord","title":"Firefox","monitor":"DP-1","address":
 export SHADOWPLAY_NOW=10500
 "$helper" start >/dev/null
 status=$("$helper" status --json)
-echo "$status" | jq -e '.running == true and .phase == "live" and .subject == null' >/dev/null \
+echo "$status" | jq -e '.running == false and .phase == "waiting" and .subject == null' >/dev/null \
   || fail "title must not match Match List rules: $status"
+[[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "title mismatch recorded the monitor"
 
 write_windows '[{"class":"Navigator","initialClass":"firefox","title":"Mozilla Firefox","monitor":"DP-1","address":"0xff","focused":true}]'
 "$helper" settings set matchList "firefox" >/dev/null
@@ -1012,6 +1013,16 @@ export SHADOWPLAY_NOW=11000
 status=$("$helper" status --json)
 echo "$status" | jq -e '.running == true and .subject == "steam" and .monitor == "DP-1"' >/dev/null \
   || fail "priority should pick earlier Match List rule when none focused: $status"
+
+write_windows '[{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == true and .phase == "linger"' >/dev/null \
+  || fail "allowlist with no listed window should Linger first: $status"
+export SHADOWPLAY_NOW=11300
+status=$("$helper" tick)
+echo "$status" | jq -e '.running == false and .phase == "waiting"' >/dev/null \
+  || fail "allowlist Linger expiry should Wait, not record the monitor: $status"
+[[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "allowlist Wait left the recorder Live"
 
 "$helper" stop
 
