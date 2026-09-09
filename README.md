@@ -157,7 +157,7 @@ Left-click the bar icon. Save clip and Open clips stay on the main surface. Repl
 
 Match List, Blacklist, and Pin target apply while Live. Mode, Buffer Target, Replay Window, audio, and encoder knobs Split if Live.
 
-The last session (Live or Off) is restored when the shell loads. A new install starts Enabled. Disable at the bottom of Settings if you want it off; that choice is kept.
+The last session (Live, Waiting, or Off) is restored when the shell loads. A new install starts Enabled. Disable at the bottom of Settings if you want it off; that choice is kept.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
