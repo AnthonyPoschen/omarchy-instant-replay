@@ -98,6 +98,14 @@ omarchy-shell io.github.anthonyposchen.instant-replay <command>
 | `hide` | Same as `close` |
 | `refresh` | Refresh status |
 
+Uninstall:
+
+```sh
+omarchy plugin remove io.github.anthonyposchen.instant-replay
+```
+
+Stop the buffer first (`omarchy-shell io.github.anthonyposchen.instant-replay stop`) or reboot. Clips stay in your videos folder. Config is left in `~/.config/omarchy-instant-replay/` and `~/.local/state/omarchy-instant-replay/`.
+
 ## Hotkeys
 
 The plugin cannot write your Hyprland binds. In Replay, **Copy Hyprland keybinds**, or paste this:
@@ -118,14 +126,6 @@ bindd = SUPER ALT, R, Save replay, exec, omarchy-shell io.github.anthonyposchen.
 **No game audio.** Window audio uses the PipeWire app name, not the Hyprland class. RuneLite is often `PipeWire ALSA [java]`.
 
 Log: `~/.local/state/omarchy-instant-replay/gsr.log`
-
-## Remove
-
-```sh
-omarchy plugin remove io.github.anthonyposchen.instant-replay
-```
-
-Stop the buffer first (`"$helper" stop`) or reboot. Clips stay in your videos folder. Config is left in `~/.config/omarchy-instant-replay/` and `~/.local/state/omarchy-instant-replay/`.
 
 ## Helper
 
