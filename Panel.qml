@@ -236,12 +236,6 @@ Panel {
     return path.slice(0, slash)
   }
 
-  function openLastClip() {
-    var path = root.lastClipPath()
-    if (path === "") return
-    Quickshell.execDetached(["/usr/bin/xdg-open", "--", path])
-  }
-
   function openLastClipInOmacut() {
     var path = root.lastClipPath()
     if (path === "") return
@@ -580,38 +574,43 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
-          Text {
-            width: parent.width
-            text: Model.plainLabel(root.status.lastClip, 256)
-            textFormat: Text.PlainText
-            elide: Text.ElideMiddle
-            color: Qt.darker(root.contentForeground, 1.3)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-          }
-
           Row {
             width: parent.width
             spacing: Style.space(8)
 
-            Button {
-              width: (parent.width - parent.spacing) / 2
-              text: "Open file"
-              enabled: !root.busy
-              bordered: true
-              foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
-              onClicked: root.openLastClip()
+            Text {
+              width: parent.width - omacutButton.width - parent.spacing
+              text: Model.plainLabel(root.status.lastClip, 256)
+              textFormat: Text.PlainText
+              elide: Text.ElideMiddle
+              color: Qt.darker(root.contentForeground, 1.3)
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              verticalAlignment: Text.AlignVCenter
+              height: omacutButton.height
             }
 
             Button {
-              width: (parent.width - parent.spacing) / 2
-              text: "omacut"
+              id: omacutButton
+              implicitWidth: Style.font.iconLarge + horizontalPadding * 2
+              implicitHeight: Style.font.iconLarge + verticalPadding * 2
+              text: ""
+              tooltipText: "omacut"
               enabled: !root.busy
-              bordered: true
               foreground: root.contentForeground
               fontFamily: root.contentFontFamily
               onClicked: root.openLastClipInOmacut()
+
+              Image {
+                anchors.centerIn: parent
+                width: Style.font.iconLarge
+                height: Style.font.iconLarge
+                fillMode: Image.PreserveAspectFit
+                sourceSize.width: Math.round(width * Screen.devicePixelRatio)
+                sourceSize.height: Math.round(height * Screen.devicePixelRatio)
+                source: Quickshell.iconPath("omacut", true)
+                asynchronous: true
+              }
             }
           }
         }
