@@ -23,6 +23,7 @@ Panel {
   property bool cursorActive: false
   property bool extrasEncoderOpen: false
   property bool extrasModeOpen: false
+  property bool extrasConfigOpen: false
   property string hotkeyCopyStatus: ""
   property string clipCopyStatus: ""
   property var commandQueue: []
@@ -529,74 +530,39 @@ Panel {
           font.pixelSize: Style.font.body
         }
 
-        Column {
+        Row {
           width: parent.width
-          spacing: Style.space(6)
-
-          Text {
-            width: parent.width
-            text: "Replays"
-            textFormat: Text.PlainText
-            color: root.contentForeground
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.body
-            font.bold: true
-          }
+          spacing: Style.space(8)
 
           Button {
-            width: parent.width
-            visible: root.running
-            height: visible ? implicitHeight : 0
-            text: "Save"
-            enabled: !root.busy
+            width: (parent.width - parent.spacing) / 2
+            text: "Save clip"
+            enabled: root.running && !root.busy
+            bordered: true
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
             onClicked: root.save()
           }
 
-          Column {
-            width: parent.width
-            spacing: Style.space(4)
-            visible: String(root.status.lastClip || "") !== ""
-            height: visible ? implicitHeight : 0
-
-            Text {
-              text: "Last save"
-              textFormat: Text.PlainText
-              color: Qt.darker(root.contentForeground, 1.5)
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Row {
-              width: parent.width
-              spacing: Style.space(8)
-
-              Text {
-                width: parent.width - copyClipButton.width - parent.spacing
-                text: Model.plainLabel(root.status.lastClip, 256)
-                textFormat: Text.PlainText
-                elide: Text.ElideMiddle
-                color: Qt.darker(root.contentForeground, 1.3)
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-                verticalAlignment: Text.AlignVCenter
-                height: copyClipButton.height
-              }
-
-              Button {
-                id: copyClipButton
-                text: root.clipCopyStatus !== "" ? root.clipCopyStatus : "Copy file"
-                enabled: !root.busy
-                foreground: root.contentForeground
-                fontFamily: root.contentFontFamily
-                onClicked: root.copyLastClip()
-              }
-            }
+          Button {
+            width: (parent.width - parent.spacing) / 2
+            text: "Open clips"
+            enabled: !root.busy && root.clipsFolderPath() !== ""
+            bordered: true
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.openClipsFolder()
           }
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+          visible: String(root.status.lastClip || "") !== ""
+          height: visible ? implicitHeight : 0
 
           Text {
-            text: "Output folder"
+            text: "Last save"
             textFormat: Text.PlainText
             color: Qt.darker(root.contentForeground, 1.5)
             font.family: root.contentFontFamily
@@ -607,36 +573,26 @@ Panel {
             width: parent.width
             spacing: Style.space(8)
 
-            TextField {
-              id: outputDirField
-              width: parent.width - browseFolderButton.width - parent.spacing
-              text: root.configuredOutputDir
-              placeholderText: root.status.outputDir !== "" ? Model.plainLabel(root.status.outputDir, 80) : "Videos/Replays"
-              maximumLength: 512
-              foreground: root.contentForeground
-              onEditingFinished: {
-                if (root.configuredOutputDir === text) return
-                root.applySetting("outputDir", text)
-              }
+            Text {
+              width: parent.width - copyClipButton.width - parent.spacing
+              text: Model.plainLabel(root.status.lastClip, 256)
+              textFormat: Text.PlainText
+              elide: Text.ElideMiddle
+              color: Qt.darker(root.contentForeground, 1.3)
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              verticalAlignment: Text.AlignVCenter
+              height: copyClipButton.height
             }
 
             Button {
-              id: browseFolderButton
-              text: "Choose"
-              enabled: !folderPickProc.running
+              id: copyClipButton
+              text: root.clipCopyStatus !== "" ? root.clipCopyStatus : "Copy file"
+              enabled: !root.busy
               foreground: root.contentForeground
               fontFamily: root.contentFontFamily
-              onClicked: root.pickOutputDir()
+              onClicked: root.copyLastClip()
             }
-          }
-
-          Button {
-            width: parent.width
-            text: "Open folder"
-            enabled: !root.busy && root.clipsFolderPath() !== ""
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.openClipsFolder()
           }
         }
 
@@ -779,51 +735,101 @@ Panel {
           }
         }
 
-        ReplayDropdown {
-          id: secondsDropdown
-          width: parent.width
-          label: "Replay Window"
-          value: String(root.configuredSeconds)
-          options: root.secondsChoices
+        ExtraGroup {
+          title: "Config"
+          open: root.extrasConfigOpen
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
-          onChanged: function(value) { root.applySetting("seconds", Model.boundedInteger(value, 60, Model.minSeconds(), Model.maxSeconds())) }
-        }
+          onToggled: root.extrasConfigOpen = !root.extrasConfigOpen
 
-        ReplayDropdown {
-          id: audioDropdown
-          width: parent.width
-          label: "Audio"
-          value: root.configuredAudio
-          options: root.audioChoices
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onChanged: function(value) { root.applySetting("audio", Model.normalizeAudio(value)) }
-        }
+          Text {
+            text: "Output folder"
+            textFormat: Text.PlainText
+            color: Qt.darker(root.contentForeground, 1.5)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+          }
 
-        ReplayDropdown {
-          id: clipResolutionDropdown
-          width: parent.width
-          label: "Resolution"
-          value: root.configuredClipResolution
-          options: root.clipResolutionChoices
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onChanged: function(value) { root.applySetting("clipResolution", Model.normalizeClipResolution(value)) }
-        }
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
 
-        ReplayDropdown {
-          id: clipScaleDropdown
-          width: parent.width
-          label: "Layout"
-          value: root.configuredClipScale
-          options: root.clipScaleChoices
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onChanged: function(value) { root.applySetting("clipScale", Model.normalizeClipScale(value)) }
-        }
+            TextField {
+              id: outputDirField
+              width: parent.width - browseFolderButton.width - parent.spacing
+              text: root.configuredOutputDir
+              placeholderText: root.status.outputDir !== "" ? Model.plainLabel(root.status.outputDir, 80) : "Videos/Replays"
+              maximumLength: 512
+              foreground: root.contentForeground
+              onEditingFinished: {
+                if (root.configuredOutputDir === text) return
+                root.applySetting("outputDir", text)
+              }
+            }
 
-        PanelSeparator {}
+            Button {
+              id: browseFolderButton
+              text: "Choose"
+              enabled: !folderPickProc.running
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: root.pickOutputDir()
+            }
+          }
+
+          ReplayDropdown {
+            id: secondsDropdown
+            width: parent.width
+            label: "Replay Window"
+            value: String(root.configuredSeconds)
+            options: root.secondsChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("seconds", Model.boundedInteger(value, 60, Model.minSeconds(), Model.maxSeconds())) }
+          }
+
+          ReplayDropdown {
+            id: audioDropdown
+            width: parent.width
+            label: "Audio"
+            value: root.configuredAudio
+            options: root.audioChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("audio", Model.normalizeAudio(value)) }
+          }
+
+          ReplayDropdown {
+            id: clipResolutionDropdown
+            width: parent.width
+            label: "Resolution"
+            value: root.configuredClipResolution
+            options: root.clipResolutionChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("clipResolution", Model.normalizeClipResolution(value)) }
+          }
+
+          ReplayDropdown {
+            id: clipScaleDropdown
+            width: parent.width
+            label: "Layout"
+            value: root.configuredClipScale
+            options: root.clipScaleChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("clipScale", Model.normalizeClipScale(value)) }
+          }
+
+          Button {
+            width: parent.width
+            text: root.hotkeyCopyStatus !== "" ? root.hotkeyCopyStatus : "Copy keybinds"
+            enabled: !root.busy
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.copyHotkeys()
+          }
+        }
 
         ExtraGroup {
           title: "Encoder"
@@ -896,15 +902,6 @@ Panel {
             fontFamily: root.contentFontFamily
             onClicked: root.applySetting("cursor", !root.configuredCursor)
           }
-        }
-
-        Button {
-          width: parent.width
-          text: root.hotkeyCopyStatus !== "" ? root.hotkeyCopyStatus : "Copy keybinds"
-          enabled: !root.busy
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onClicked: root.copyHotkeys()
         }
       }
     }
