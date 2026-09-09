@@ -78,6 +78,26 @@ H.264 cannot capture a side over 4096px. Ultrawide: use `auto` or `hevc`.
 
 `omarchy screenrecord` is a separate start/stop recording. Only one capture can run. Turn Instant Replay off if you want a stock take. Instant Replay will not kill a stock recording to start itself.
 
+## Commands
+
+From a terminal or a Hyprland bind:
+
+```sh
+omarchy-shell io.github.anthonyposchen.instant-replay <command>
+```
+
+| Command | What it does |
+| --- | --- |
+| `save` | Save the last N seconds to a clip (while recording) |
+| `start` | Turn the buffer on |
+| `stop` | Turn the buffer off |
+| `toggle` | Open or close Settings |
+| `open` | Open Settings |
+| `show` | Same as `open` |
+| `close` | Close Settings |
+| `hide` | Same as `close` |
+| `refresh` | Refresh status |
+
 ## Hotkeys
 
 The plugin cannot write your Hyprland binds. In Replay, **Copy Hyprland keybinds**, or paste this:
