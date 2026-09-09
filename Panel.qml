@@ -25,7 +25,6 @@ Panel {
   property bool extrasModeOpen: false
   property bool extrasConfigOpen: false
   property string hotkeyCopyStatus: ""
-  property string clipCopyStatus: ""
   property var commandQueue: []
   property string pendingAfter: ""
   property bool pickShouldReopen: false
@@ -222,20 +221,31 @@ Panel {
     root.hotkeyCopyStatus = "Copied"
   }
 
-  function copyLastClip() {
-    var text = String(root.status.lastClip || "")
-    if (text === "") return
-    Quickshell.execDetached(["/usr/bin/wl-copy", "--", text])
-    root.clipCopyStatus = "Copied"
+  function lastClipPath() {
+    var path = String(root.status.lastClip || "")
+    if (path.charAt(0) !== "/" || path.indexOf("\n") !== -1) return ""
+    return path
   }
 
   function lastClipFolder() {
-    var path = String(root.status.lastClip || "")
+    var path = root.lastClipPath()
     var slash
-    if (path.charAt(0) !== "/" || path.indexOf("\n") !== -1) return ""
+    if (path === "") return ""
     slash = path.lastIndexOf("/")
     if (slash < 1) return ""
     return path.slice(0, slash)
+  }
+
+  function openLastClip() {
+    var path = root.lastClipPath()
+    if (path === "") return
+    Quickshell.execDetached(["/usr/bin/xdg-open", "--", path])
+  }
+
+  function openLastClipInOmacut() {
+    var path = root.lastClipPath()
+    if (path === "") return
+    Quickshell.execDetached(["/usr/bin/omacut", "--", path])
   }
 
   function clipsFolderPath() {
@@ -569,29 +579,38 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
+          Text {
+            width: parent.width
+            text: Model.plainLabel(root.status.lastClip, 256)
+            textFormat: Text.PlainText
+            elide: Text.ElideMiddle
+            color: Qt.darker(root.contentForeground, 1.3)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+          }
+
           Row {
             width: parent.width
             spacing: Style.space(8)
 
-            Text {
-              width: parent.width - copyClipButton.width - parent.spacing
-              text: Model.plainLabel(root.status.lastClip, 256)
-              textFormat: Text.PlainText
-              elide: Text.ElideMiddle
-              color: Qt.darker(root.contentForeground, 1.3)
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
-              verticalAlignment: Text.AlignVCenter
-              height: copyClipButton.height
+            Button {
+              width: (parent.width - parent.spacing) / 2
+              text: "Open file"
+              enabled: !root.busy
+              bordered: true
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: root.openLastClip()
             }
 
             Button {
-              id: copyClipButton
-              text: root.clipCopyStatus !== "" ? root.clipCopyStatus : "Copy file"
+              width: (parent.width - parent.spacing) / 2
+              text: "omacut"
               enabled: !root.busy
+              bordered: true
               foreground: root.contentForeground
               fontFamily: root.contentFontFamily
-              onClicked: root.copyLastClip()
+              onClicked: root.openLastClipInOmacut()
             }
           }
         }
