@@ -245,7 +245,8 @@ Panel {
   function openLastClipInOmacut() {
     var path = root.lastClipPath()
     if (path === "") return
-    Quickshell.execDetached(["/usr/bin/omacut", "--", path])
+    // omacut takes args.at(1) as the video. It does not skip "--".
+    Quickshell.execDetached(["/usr/bin/omacut", path])
   }
 
   function clipsFolderPath() {
