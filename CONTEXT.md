@@ -58,18 +58,18 @@ After the last Subject is destroyed, dump its ring as a Segment (so Save keeps t
 When the focused window is not allowed to become the Subject, keep the last Subject. Alt-tab to Discord does not retarget. Linger is what happens after that window is gone.
 
 **Follow Mode**:
-UI name: Follow active window. One mode with a **Filter**: Allowlist (Match List), Denylist (Blacklist), or All. Among windows the Filter allows, the focused one is the Subject. Otherwise Sticky. An allowed window on another monitor is a Split; Save stitches. A new Subject on the same monitor dumps the current ring as a Segment tagged with the old crop and clears the ring without stopping capture; Save stitches those Segments with the live buffer. Filter=All still ignores built-in Omarchy chrome (bar, launcher, lock); that is not the same as emptying the Denylist.
+UI name: Follow focused window. One mode with a **Filter**: Allowlist (Match List), Denylist (Blacklist), or All. Among windows the Filter allows, the focused one is the Subject. Otherwise Sticky. An allowed window on another monitor is a Split; Save stitches. A new Subject on the same monitor dumps the current ring as a Segment tagged with the old crop and clears the ring without stopping capture; Save stitches those Segments with the live buffer. Filter=All still ignores built-in Omarchy chrome (bar, launcher, lock); that is not the same as emptying the Denylist.
 _Avoid_: Smart Follow as a top-level mode, Open
 
 **Pin Mode**:
-One specific window: from the window picker, or the focused window when Enabled with none set yet (same idea as Monitor pinning the focused output at start). A glance at anything else does not retarget. If that window itself moves to another monitor, that is a Split; Save stitches. Not the same Settings control as Region.
+UI name: Window. One specific window: from the window picker, or the focused window when Enabled with none set yet (same idea as Monitor pinning the focused output at start). A glance at anything else does not retarget. If that window itself moves to another monitor, that is a Split; Save stitches. Not the same Settings control as Custom.
 
 **Monitor Mode**:
 No Subject. Dumb pin of one monitor: named connector, or focused output **at start**. Focus changes do not retarget. Default for a new install. A new install starts Enabled. After that, the last on/off state is restored when the shell loads. Follow, Pin, and Region are opt-in.
 _Avoid_: Open Mode, simple start, follow focused output
 
 **Region Mode**:
-Dumb pin of a fixed rectangle, from the region picker. No Subject, no Filter, no smart swapping. The rectangle is persisted and must sit on one monitor. Re-picking while live is a Split. Not the same Settings control as Pin. Fullscreen-window capture is Pin or Follow with Window extent, not Region.
+UI name: Custom. Dumb pin of a fixed rectangle, from the region picker. No Subject, no Filter, no smart swapping. The rectangle is persisted and must sit on one monitor. Re-picking while live is a Split. Not the same Settings control as Window. Fullscreen-window capture is Pin or Follow with Window extent, not Custom.
 
 **Hotkey**:
 A Hyprland bind the user installs themselves. The plugin cannot write their bind file. Settings copies `bindd` hyprlang with Save live (`SUPER + ALT + R`) and start, stop, toggle, open, and close commented out. `show`, `hide`, and `refresh` stay out of that list. The README lists the same set.

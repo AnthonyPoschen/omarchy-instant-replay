@@ -39,7 +39,7 @@ Save does not stop the Replay Buffer. Fitting the Clip to your canvas can use a 
 Follow plus Window audio keeps the Replay Buffer on the game and the Clip on that game's sound, not Discord or the rest of the desktop.
 
 1. Left-click the bar icon.
-2. Set **Mode** to Follow active window.
+2. Set **Mode** to Follow focused window.
 3. Set **Audio** to Window audio (or Window + microphone). Desktop audio is the default and records the whole system.
 4. Pick a **Filter**:
    - **Denylist** — skip chat, browser, and other non-games. Use **Pick window** on each one. The list already includes Omarchy chrome (bar, launcher, lock).
@@ -64,7 +64,7 @@ Mode is the first control in Settings. The rest of the panel swaps to match.
 
 Default. Pins one output: a named connector (`DP-1`, `HDMI-A-1`, …) or whichever monitor is focused **when the buffer starts**. Moving focus later does not retarget.
 
-### Follow active window
+### Follow focused window
 
 Tracks the focused window among those the Filter allows. Turning the switch on starts a Replay Buffer immediately. A matching window becomes the Subject; otherwise the buffer stays Live on the current monitor.
 
@@ -78,13 +78,13 @@ If the Subject closes, the buffer **Lingers** on that monitor for one Replay Win
 
 Follow Save is always cropped to the Subject rectangle. A fullscreen Subject is the same as the monitor. Set Audio to Window audio if the Clip should hear the game and not the rest of the desktop.
 
-### Pin window
+### Window
 
 Stays on one window from the picker. If you Enable with none picked yet, it pins the focused window and goes Live. A glance at anything else does not retarget. If that window moves to another monitor, that is a Split.
 
-### Region
+### Custom
 
-Pins a rectangle on one monitor. Re-picking while Live is a Split. Use Pin or Follow if you want a fullscreen window, not Region.
+Pins a rectangle on one monitor. Re-picking while Live is a Split. Use Window or Follow if you want a fullscreen window, not Custom.
 
 ## Audio
 

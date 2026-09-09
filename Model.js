@@ -453,9 +453,9 @@ function statusLabel(status, mode) {
 function modeOptions() {
   return [
     { value: "monitor", label: "Monitor" },
-    { value: "follow", label: "Follow active window" },
-    { value: "pin", label: "Pin window" },
-    { value: "region", label: "Region" }
+    { value: "follow", label: "Follow focused window" },
+    { value: "pin", label: "Window" },
+    { value: "region", label: "Custom" }
   ]
 }
 
