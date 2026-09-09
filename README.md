@@ -2,9 +2,9 @@
 
 Save a clip of what just happened, even though you never started a recording.
 
-Instant Replay holds a rolling buffer of your screen in the background. One action writes the last N seconds to a file and the buffer keeps running. Same idea as NVIDIA ShadowPlay or Xbox Game DVR, using the GPU Screen Recorder Omarchy already ships. Capture and save stay on this machine. No network.
+It keeps a rolling buffer of your screen. You save when you want the file. The buffer keeps running. Same idea as NVIDIA ShadowPlay, using the GPU Screen Recorder Omarchy already has. Nothing leaves this machine.
 
-A new install starts enabled on your focused monitor, last 60 seconds, desktop audio, 1080p clips. Open Settings from the bar if you want a different slice of the screen, only the game's sound, or a longer window.
+A new install is already on: focused monitor, last 60 seconds, desktop audio, 1080p. Open Settings if you want something else.
 
 ## Install
 
@@ -12,244 +12,85 @@ A new install starts enabled on your focused monitor, last 60 seconds, desktop a
 omarchy plugin add https://github.com/AnthonyPoschen/omarchy-instant-replay.git --enable
 ```
 
-Move the icon if you want it on the left:
-
 ```sh
 omarchy bar move io.github.anthonyposchen.instant-replay --section left
 ```
 
-You need Omarchy 4 (the Quickshell bar) plus `gpu-screen-recorder`, `gsr-cli`, and `ffmpeg`. Omarchy already installs those. Opening the last clip in Omacut needs the `omacut` package, which new Omarchy Quattro installs include.
+Needs Omarchy 4. GPU Screen Recorder and ffmpeg are already there. The Omacut icon on last-save needs `omacut` (ships with new Quattro).
 
-Plugin id: `io.github.anthonyposchen.instant-replay`.
+## Use it
 
-## Everyday use
+Left-click the disc for Settings. The switch in the top-right turns it on and off.
 
-Left-click the disc in the bar to open Settings. The switch in the top-right turns the buffer on and off.
-
-| Action | What it does |
+| Click | Result |
 | --- | --- |
-| Left-click the disc | Open or close Settings. |
-| Right-click the disc | Save the last N seconds to a video file, while the buffer is recording. |
-| Middle-click the disc | Refresh status. |
+| Left | Settings |
+| Right | Save the last N seconds (while it is recording) |
+| Middle | Refresh |
 
-The disc is theme-colored when the buffer is off or waiting, red while it is capturing, and three dots while a clip is encoding.
+Red disc = capturing. Three dots = saving a file. Theme color = off or waiting.
 
-Settings status is one of:
+- **RECORDING** — capturing now
+- **WAITING** — on, but nothing valid to capture with the current settings
+- **DISABLED** — off
 
-- **RECORDING** — the buffer is capturing right now.
-- **WAITING** — the switch is on, but the current settings have no valid capture target, so nothing is being captured.
-- **DISABLED** — the buffer is off.
+**Save clip** writes a file to `~/Videos/Replays`. **Open clips** opens that folder. After a save you get the path, a copy button, and an Omacut button to trim it. Saving does not stop the buffer.
 
-**Save clip** writes a file. **Open clips** opens the folder. After a save, Settings shows that path with a copy icon (clipboard) and the Omacut icon (opens the file in Omacut to trim). Saving does not stop the buffer.
+## What to capture
 
-Clips land in `~/Videos/Replays` (or `$OMARCHY_SCREENRECORD_DIR/Replays`) unless you pick another folder under Replay.
+Under **Recording region**, pick a mode:
 
-Encoding a clip can use spare CPU. The job runs at nice 19 with idle I/O so a game keeps the cores. Wait it out, or lower clip resolution.
+**Monitor** — the whole screen. Default. Pick an output, or leave empty for whichever monitor is focused when you turn it on.
 
-## What you capture
+**Follow focused window** — stays on the window you are using, if the Filter allows it. Alt-tab to Discord does not steal the buffer. The saved clip is cropped to that window.
 
-The slice of screen in the buffer is **Recording region**. Open that section in Settings and pick a **Mode**. The rest of that section changes to match.
+- **All** — any window except the Omarchy bar, launcher, and lock
+- **Allowlist** — only windows you pick. If none of those are open, it waits. It does not record the whole monitor.
+- **Denylist** — skip windows you pick (chrome is pre-filled)
 
-### Monitor
+**Window** — one window you pick. Nothing else retargets it. Turn it on with a game focused and it pins that game (not the bar).
 
-The whole display. Default for a new install.
+**Custom** — a rectangle you draw. For a fullscreen game, use Window or Follow instead.
 
-Pick a named output (`DP-1`, `HDMI-A-1`, …) or leave it empty to use whichever monitor is focused when you turn the buffer on. Moving the mouse to another screen later does not retarget.
+If you change monitor, mode, audio, or length while it is recording, the buffer restarts. Save still joins recent pieces into one file when they fit in the Replay Window.
 
-Use this when you want “whatever is on this monitor.” It has no per-window audio option. The clip is the full output.
+## Sound and clip size
 
-### Follow focused window
+Under **Replay**:
 
-The buffer tracks the window you are using, among the windows you allow.
+- **Desktop audio** — whatever the system is playing (default)
+- **Window audio** — only the tracked window (Follow and Window modes). Use this so Discord is not in the clip.
+- **Replay Window** — how many seconds Save keeps (default 60)
+- **Resolution / Layout** — size and fit of the saved file, not the capture
 
-The focused window that passes the Filter is what Save crops to. A fullscreen game is the same as the monitor. Alt-tab to Discord does not yank the buffer onto Discord. If that game moves to another monitor, Save still writes one file: the old screen and the new screen are joined in private.
+**Encoder** is codec, fps, quality. Leave it unless you care.
 
-When the game closes, the buffer stays on that monitor for one Replay Window (so you can still save the last seconds of that window). After that:
+H.264 cannot capture a side over 4096px. Ultrawide: use `auto` or `hevc`.
 
-- **Allowlist** waits until a listed window is open again. It does not silently capture the whole monitor.
-- **All** and **Denylist** stay capturing that monitor until a matching window returns, or you turn the switch off.
+## This is not Alt+Print
 
-Follow has a **Filter**:
-
-| Filter | Who can become the tracked window |
-| --- | --- |
-| **All** | Any window except built-in Omarchy chrome (bar, launcher, lock). Emptying Denylist is not the same as All. |
-| **Allowlist** | Only classes you pick. Click **Pick window** on each game. If several listed games are open and none is focused, list order wins. If none of those windows exist, status is **WAITING** and nothing is captured. Switching back to Allowlist with no listed window waits immediately. |
-| **Denylist** | Skip classes you pick. Ships with Omarchy chrome; you can remove those. It does not hunt for “any open game.” If Discord is focused when you turn it on, it captures that monitor until you focus something that is not on the list. |
-
-Use Follow when you bounce between a game and chat and still want the buffer on the game. Pair it with Window audio if the clip should hear the game, not Discord.
-
-### Window
-
-One specific window, from **Pick window**. Looking at anything else does not retarget.
-
-If you turn the switch on with nothing picked yet, it pins the focused window (not the Omarchy bar). If only chrome is focused, Enable fails until you pick a window.
-
-Switching to Window while already capturing keeps the buffer running on that pin. If the pinned window moves to another monitor, Save still writes one file.
-
-Use this when you only ever care about one client (a game, a stream layout) and do not want Follow’s filter.
-
-### Custom
-
-A rectangle you draw on one monitor. Re-picking while capturing starts a new buffer on the new rectangle; Save still writes one file if both pieces fall inside the Replay Window.
-
-Use this for a fixed slice of a screen. For a fullscreen window, use Window or Follow instead.
-
-## How long, and how the file looks
-
-These live under **Replay**.
-
-**Replay Window** is how much recent time Save keeps: 15 seconds to 2 hours, default 60 seconds. Right-click save uses that length. You can still ask the helper for a shorter save (for example 30 seconds) without changing the setting.
-
-**Resolution** is the size of the saved file, not the size of the monitor: 720p, 1080p (default), 1440p, or 2160p.
-
-**Layout** is how captured frames land on that canvas:
-
-- **Fit** (default) — show the whole picture, add bars if the aspect ratio differs.
-- **Stretch** — fill the canvas, may distort.
-- **Center** — keep native pixels; bars if smaller, crop if larger.
-
-Changing resolution or layout does not restart the buffer. **Cursor** includes the pointer in the buffer; it lives in Replay, not Encoder.
-
-**Encoder** (codec, FPS, quality, framerate mode, bitrate mode) is for people who want to change how GPU Screen Recorder compresses. Collapsed by default. H.264 cannot capture a side longer than 4096 pixels on NVENC. A 5120×1440 output with codec `h264` falls back to HEVC so capture can start. Prefer `auto` or `hevc` on ultrawide.
-
-Changing mode, which monitor or rectangle you capture, Replay Window length, audio, or encoder settings while Recording restarts the buffer on the new target. Recent history from the old target is kept and joined on Save when it still falls inside the Replay Window.
-
-## What the clip hears
-
-Audio is under **Replay**.
-
-| Setting | What the saved file hears |
-| --- | --- |
-| No audio | Video only. |
-| Desktop audio | Whatever the system is playing. Default. |
-| Desktop + microphone | System output mixed with the default input. |
-| Window audio | Only the tracked window’s application stream. Follow and Window modes. |
-| Window + microphone | That stream plus the default input. Follow and Window modes. |
-
-Window audio is the app’s PipeWire name, not the Hyprland class. Java games (RuneLite and similar) often show up as `PipeWire ALSA [java]`. Discord’s window-share picker can still miss that stream. This plugin cannot inject audio into Discord.
-
-Monitor and Custom have no Window audio option. Changing audio while Recording restarts the buffer.
-
-## Set this up for a game
-
-Goal: the buffer stays on the game you are looking at, and the clip hears that game, not the rest of the desktop.
-
-1. Left-click the bar icon.
-2. Open **Recording region**. Set **Mode** to Follow focused window.
-3. Set **Filter** to Allowlist if you only want listed games, or Denylist if you want “anything except chat and chrome.” Use **Pick window** to add entries. Allowlist list order is the fallback when none of those games is focused.
-4. Open **Replay**. Set **Audio** to Window audio (or Window + microphone). Leave Desktop audio if you want the whole system mix.
-5. Turn the switch on with the game focused. Status should be **RECORDING**. If you chose Allowlist and the game is not open, status is **WAITING** until that window exists.
-
-You can instead set Mode to **Window** and pick the game once. That is simpler if you never want Follow to retarget.
-
-## Settings map
-
-Left-click the disc. The switch is top-right.
-
-On the main surface: Save clip, Open clips, and last-save path (copy + Omacut) once you have saved at least once.
-
-Then three collapsed groups, in this order. An open group ends with a divider.
-
-| Section | What it holds |
-| --- | --- |
-| **Replay** | Output folder, Replay Window, audio, resolution, layout, cursor, Copy Hyprland keybinds. |
-| **Recording region** | Mode, Filter, Allowlist or Blacklist, monitor / pick window / pick region. |
-| **Encoder** | Codec, FPS, quality, framerate mode, bitrate mode. |
-
-A new install starts enabled. The last on/off/waiting state is restored when the shell loads. Turn the top-right switch off if you want it to stay off.
-
-Allowlist, Blacklist, and the pinned window apply while Recording. Changing mode, monitor, rectangle, Replay Window, audio, or encoder restarts the buffer. Cursor, clip resolution, and layout do not.
-
-```sh
-omarchy bar set io.github.anthonyposchen.instant-replay seconds 120 --json
-omarchy bar set io.github.anthonyposchen.instant-replay audio desktop --json
-```
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `mode` | `monitor` | `monitor`, `follow`, `pin`, or `region`. Labels: Monitor, Follow focused window, Window, Custom. |
-| `monitor` | empty | Output name. Empty uses the focused monitor at start. |
-| `seconds` | `60` | Replay Window, 15–7200. |
-| `audio` | `desktop` | `none`, `desktop`, `both`. Follow and Window also offer `window` and `window-mic`. |
-| `filter` | `all` | Follow only: `all`, `allowlist`, `denylist`. |
-| `matchList` | empty | Allowlist window classes, comma-separated. |
-| `blacklist` | Omarchy chrome | Denylist window classes. |
-| `pinAddress` | empty | Hyprland client address for Window mode. |
-| `region` | empty | Custom rectangle, `WxH+X+Y`. |
-| `clipResolution` | `1080p` | Clip canvas. |
-| `clipScale` | `fit` | `fit`, `stretch`, or `center`. |
-| `codec` | `auto` | `auto`, `h264`, `hevc`, `av1`, `vp8`, `vp9`. |
-| `fps` | `60` | Capture frame rate. |
-| `quality` | `40000` | Encoder quality / bitrate knob. |
-| `cursor` | `true` | Include the pointer. In Replay, not Encoder. |
-| `framerateMode` | `cfr` | `cfr` or `vfr`. |
-| `bitrateMode` | `cbr` | `cbr` or `vbr`. |
-| `outputDir` | empty | Absolute path for clips. Empty uses Videos/Replays. |
+`omarchy screenrecord` is a separate start/stop recording. Only one capture can run. Turn Instant Replay off if you want a stock take. Instant Replay will not kill a stock recording to start itself.
 
 ## Hotkeys
 
-The plugin cannot write your Hyprland bind file. In Replay, use **Copy Hyprland keybinds**, or paste this next to your other `bindd` lines. Save is ready to use. The rest stay commented until you want them.
+The plugin cannot write your Hyprland binds. In Replay, **Copy Hyprland keybinds**, or paste this:
 
 ```hyprlang
 bindd = SUPER ALT, R, Save replay, exec, omarchy-shell io.github.anthonyposchen.instant-replay save
 # bindd = SUPER ALT, S, Start replay buffer, exec, omarchy-shell io.github.anthonyposchen.instant-replay start
 # bindd = SUPER ALT, X, Stop replay buffer, exec, omarchy-shell io.github.anthonyposchen.instant-replay stop
 # bindd = SUPER ALT, T, Toggle Instant Replay panel, exec, omarchy-shell io.github.anthonyposchen.instant-replay toggle
-# bindd = SUPER ALT, O, Open Instant Replay, exec, omarchy-shell io.github.anthonyposchen.instant-replay open
-# bindd = SUPER ALT, C, Close Instant Replay, exec, omarchy-shell io.github.anthonyposchen.instant-replay close
 ```
 
-`show`, `hide`, and `refresh` are not in that list.
+## If it fails
 
-## This is not Omarchy screen record
+**Will not record.** Stop `omarchy screenrecord`. Ultrawide + h264 → switch codec to auto or hevc.
 
-Alt+Print and `omarchy screenrecord` are a separate start/stop take. Instant Replay starts GPU Screen Recorder as `omarchy-instant-replay-gsr` so the stock indicator should not treat the buffer as that take.
+**WAITING.** Current settings have nothing valid to capture. Change mode or filter, or open a window they allow.
 
-Only one screen capture can run at a time. While Instant Replay is recording, `omarchy screenrecord` may fail to start. Turn Instant Replay off first if you want a stock take. Instant Replay never stops a stock recording to start itself.
+**No game audio.** Window audio uses the PipeWire app name, not the Hyprland class. RuneLite is often `PipeWire ALSA [java]`.
 
-## Helper
-
-After install:
-
-```sh
-helper="$HOME/.config/omarchy/plugins/io.github.anthonyposchen.instant-replay/bin/omarchy-instant-replay"
-
-"$helper" start
-"$helper" save
-"$helper" save 30
-"$helper" stop
-"$helper" status --json
-"$helper" settings show --json
-"$helper" doctor
-```
-
-`save 30` writes the last 30 seconds even if the Replay Window is longer.
-
-## Files
-
-| Path | What it is |
-| --- | --- |
-| `~/.config/omarchy-instant-replay/config` | Helper settings. |
-| `~/.local/state/omarchy-instant-replay/` | Activity, PID, segments, save jobs, GSR log. |
-| `$XDG_RUNTIME_DIR/omarchy-instant-replay/` | IPC socket and GSR output. Gone on logout. |
-| `~/Videos/Replays/` (or your clips folder) | Saved clips. Kept after plugin removal. |
-
-An older `~/.config/omarchy-shadowplay/` config is copied once if the new config file is missing.
-
-## If something fails
-
-**Capture will not start.** Only one screen capture can run. Stop `omarchy screenrecord` first. If the log says H.264 max resolution, use `auto` or `hevc`.
-
-**Settings says WAITING.** The switch is on, but the current settings have no valid capture target. Nothing is being captured. Change mode or filter, or open a window those settings allow.
-
-**Window audio is silent.** The Hyprland class is not the PipeWire name. Java titles (RuneLite) are often `PipeWire ALSA [java]`. Check `"$helper" status --json` shows the right window, then Save again.
-
-**A clip is encoding and the machine feels busy.** The bar shows three dots. ffmpeg is niced; it still uses spare cores. Wait, or lower clip resolution.
-
-**The bar icon did not update after you edited QML.** The shell loads `~/.config/omarchy/plugins/io.github.anthonyposchen.instant-replay/`, not a git checkout. Copy into that directory and run `omarchy restart shell`.
-
-The GPU Screen Recorder log is `~/.local/state/omarchy-instant-replay/gsr.log`.
+Log: `~/.local/state/omarchy-instant-replay/gsr.log`
 
 ## Remove
 
@@ -257,19 +98,19 @@ The GPU Screen Recorder log is `~/.local/state/omarchy-instant-replay/gsr.log`.
 omarchy plugin remove io.github.anthonyposchen.instant-replay
 ```
 
-That removes the plugin from the bar. It does not stop a buffer that is still recording. Run `"$helper" stop` first, or reboot.
+Stop the buffer first (`"$helper" stop`) or reboot. Clips stay in your videos folder. Config is left in `~/.config/omarchy-instant-replay/` and `~/.local/state/omarchy-instant-replay/`.
 
-State under `~/.config/omarchy-instant-replay/` and `~/.local/state/omarchy-instant-replay/` is left behind. Clips stay in your clips folder. Delete those directories yourself if you want them gone.
-
-## Development
+## Helper
 
 ```sh
-omarchy plugin validate .
-qmllint -I "$OMARCHY_PATH/shell" BarWidget.qml Panel.qml
-bash tests/test-helper.sh
+helper="$HOME/.config/omarchy/plugins/io.github.anthonyposchen.instant-replay/bin/omarchy-instant-replay"
+"$helper" start
+"$helper" save
+"$helper" save 30
+"$helper" stop
+"$helper" status --json
+"$helper" doctor
 ```
-
-`tests/test-helper.sh` is the contract for start, save, stop, and monitor selection. It uses the fakes in `tests/`. Do not call a real GPU encoder from unit tests.
 
 ## License
 
