@@ -599,7 +599,7 @@ Panel {
         PanelSeparator {}
 
         ExtraGroup {
-          title: "Recording mode"
+          title: "Recording region"
           open: root.extrasModeOpen
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
