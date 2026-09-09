@@ -2472,16 +2472,10 @@ cmd_pin_tick() {
   line=$(window_line_by_address "$CONFIG_PIN_ADDRESS" || true)
   if [[ -n $line ]]; then
     IFS='|' read -r class _ win_mon win_addr _ <<<"$line"
-    if [[ $phase == linger && $win_mon == "$monitor" ]]; then
+    # Same-output updates keep the current capture. After a mode switch the
+    # recorder is already stopped (phase=live, not running) — launch again.
+    if [[ ($phase == live || $phase == linger) && $win_mon == "$monitor" ]] && buffer_running; then
       write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$win_addr" "-" "$(window_crop_spec "$win_addr" "$class" "$win_mon")"
-      return 0
-    fi
-    if [[ $phase == live || $phase == linger ]]; then
-      if [[ $win_mon == "$monitor" ]]; then
-        write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "$class" "$win_addr" "-" "$(window_crop_spec "$win_addr" "$class" "$win_mon")"
-        return 0
-      fi
-      go_live_on "$win_mon" "$class" "$win_addr"
       return 0
     fi
     go_live_on "$win_mon" "$class" "$win_addr"

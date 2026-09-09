@@ -1114,6 +1114,19 @@ status=$("$helper" status --json)
 echo "$status" | jq -e '.mode == "pin" and .running == false and .phase == "off"' >/dev/null \
   || fail "selecting Pin while Off should stay Off: $status"
 
+"$helper" settings set mode follow >/dev/null
+"$helper" settings set filter all >/dev/null
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
+export SHADOWPLAY_NOW=10015
+"$helper" start >/dev/null
+"$helper" settings set pinAddress 0xff >/dev/null
+"$helper" settings set mode pin >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.mode == "pin" and .running == true and .phase == "live" and .monitor == "DP-1" and .subject == "firefox" and .pinAddress == "0xff"' >/dev/null \
+  || fail "switching to Pin while Live should keep recording the pinned window: $status"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "switching to Pin while Live stopped the Replay Buffer"
+"$helper" stop >/dev/null
+
 "$helper" settings set pinAddress "" >/dev/null
 write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
 export SHADOWPLAY_NOW=10020
