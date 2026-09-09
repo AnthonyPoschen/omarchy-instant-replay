@@ -2359,6 +2359,24 @@ cmd_follow_tick() {
   fi
 }
 
+# Pin with no stored window: take the focused client, like Monitor pins the
+# focused output at start. Skip Omarchy chrome so Enable from the bar does
+# not pin the shell. Follow's Filter does not apply — Pin is one window.
+adopt_pin_from_focus() {
+  [[ -z $CONFIG_PIN_ADDRESS ]] || return 1
+  local line class initial win_mon win_addr
+  line=$(focused_window_line || true)
+  [[ -n $line ]] || return 1
+  IFS='|' read -r class initial win_mon win_addr _ <<<"$line"
+  [[ -n $win_addr ]] || return 1
+  if is_chrome_class "$class" || is_chrome_class "$initial"; then
+    return 1
+  fi
+  CONFIG_PIN_ADDRESS="$win_addr"
+  write_config
+  return 0
+}
+
 cmd_pin_tick() {
   load_config
   [[ $CONFIG_MODE == pin ]] || return 0
@@ -2370,6 +2388,10 @@ cmd_pin_tick() {
   phase=$(activity_value phase)
   monitor=$(activity_value monitor)
   linger_until=$(activity_value linger_until)
+
+  if [[ -z $CONFIG_PIN_ADDRESS ]]; then
+    adopt_pin_from_focus || true
+  fi
 
   if [[ -z $CONFIG_PIN_ADDRESS ]]; then
     if [[ $phase == live || $phase == linger ]]; then
@@ -2437,6 +2459,12 @@ cmd_start() {
   fi
   write_config
   if [[ $CONFIG_MODE == follow || $CONFIG_MODE == pin ]]; then
+    if [[ $CONFIG_MODE == pin && -z $CONFIG_PIN_ADDRESS ]]; then
+      adopt_pin_from_focus || true
+    fi
+    if [[ $CONFIG_MODE == pin && -z $CONFIG_PIN_ADDRESS ]]; then
+      die "Pin Mode needs a window. Pick a window first."
+    fi
     if ! follow_session_active; then
       write_activity false "" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" armed "-" "-" "-"
     fi
@@ -2571,7 +2599,15 @@ print_status_json() {
   printf '"saving":%s,' "$(saving_count)"
   local phase armed linger
   phase=$(activity_value phase)
-  [[ -n $phase ]] || phase=$([[ $running == true ]] && echo live || echo off)
+  if [[ -z $phase ]]; then
+    if [[ $running == true ]]; then
+      phase=live
+    elif [[ -r $ACTIVITY_FILE ]]; then
+      phase=off
+    else
+      phase=""
+    fi
+  fi
   armed=false
   linger=false
   [[ $phase == armed ]] && armed=true
@@ -2870,15 +2906,28 @@ cmd_settings_set() {
   fi
   write_config
   if [[ $key == mode && $prev_mode != "$CONFIG_MODE" ]]; then
+    local session_on=false
+    if follow_session_active || buffer_running; then
+      session_on=true
+    fi
     if buffer_running; then
       flush_segment
       stop_recorder
     fi
-    if [[ $CONFIG_MODE == follow || $CONFIG_MODE == pin ]]; then
-      write_activity false "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" armed "-" "-" "-"
-      cmd_tick
-    elif buffer_running || [[ $(activity_value phase) == live || $(activity_value phase) == linger ]]; then
-      launch_recorder
+    if [[ $session_on == true ]]; then
+      if [[ $CONFIG_MODE == follow || $CONFIG_MODE == pin ]]; then
+        if [[ $CONFIG_MODE == pin && -z $CONFIG_PIN_ADDRESS ]]; then
+          adopt_pin_from_focus || true
+        fi
+        if [[ $CONFIG_MODE == pin && -z $CONFIG_PIN_ADDRESS ]]; then
+          write_activity false "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" off "-" "-" "-" "-"
+          die "Pin Mode needs a window. Pick a window first."
+        fi
+        write_activity false "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" armed "-" "-" "-"
+        cmd_tick
+      else
+        launch_recorder
+      fi
     fi
   elif [[ $key == matchList || $key == blacklist || $key == filter || $key == clipResolution || $key == clipScale || $key == captureExtent || $key == outputDir ]]; then
     if [[ $CONFIG_MODE == follow ]] && follow_session_active; then

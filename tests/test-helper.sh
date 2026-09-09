@@ -93,6 +93,10 @@ assert_no_gsr_leftovers() {
   [[ -z $leftovers ]] || fail "save-replay leftovers in public/fake dir: $leftovers"
 }
 
+status=$("$helper" status --json)
+echo "$status" | jq -e '.running == false and .phase == ""' >/dev/null \
+  || fail "new install status should be off with empty phase so the shell can Enable by default: $status"
+
 "$helper" start >/dev/null
 [[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "start did not launch the recorder"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "-w"
@@ -1070,6 +1074,34 @@ clip=$(saved)
 [[ -e $clip ]] || fail "Pin Split Clip missing"
 assert_no_gsr_leftovers
 "$helper" stop
+
+"$helper" settings set mode monitor >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.mode == "monitor" and .running == false and .phase == "off"' >/dev/null \
+  || fail "stop then monitor should be Off: $status"
+"$helper" settings set mode pin >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.mode == "pin" and .running == false and .phase == "off" and .armed != true' >/dev/null \
+  || fail "selecting Pin while Off should stay Off, not Armed: $status"
+
+"$helper" settings set pinAddress "" >/dev/null
+write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
+export SHADOWPLAY_NOW=10020
+"$helper" start >/dev/null
+status=$("$helper" status --json)
+echo "$status" | jq -e '.mode == "pin" and .running == true and .phase == "live" and .monitor == "DP-1" and .subject == "firefox" and .pinAddress == "0xff"' >/dev/null \
+  || fail "pin Enable with no pick should pin the focused window and go Live: $status"
+"$helper" stop >/dev/null
+
+"$helper" settings set pinAddress "" >/dev/null
+write_windows '[{"class":"org.quickshell","monitor":"DP-1","address":"0xqs","focused":true}]'
+if "$helper" start >/dev/null 2>"$work/pin-empty-err"; then
+  fail "pin Enable with only chrome should fail, not Arm"
+fi
+grep -qi 'window' "$work/pin-empty-err" || fail "pin empty error was unclear: $(<"$work/pin-empty-err")"
+status=$("$helper" status --json)
+echo "$status" | jq -e '.running == false and .armed != true and .phase != "armed"' >/dev/null \
+  || fail "failed pin Enable should stay Off: $status"
 
 # Monitor Save after Follow must not keep the window crop on the live buffer.
 export SHADOWPLAY_NOW=12000
