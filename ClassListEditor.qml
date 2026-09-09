@@ -3,9 +3,8 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Allowlist / denylist editor: title (with page range), class rows, then a
-// faint rule, then Pick window / empty. Pages after five items. The range
-// lives on the title row so a late count cannot hide a separate pager.
+// Allowlist / denylist editor: a body-weight title, then class rows and
+// Pick / Empty with tight spacing so they read as one group.
 Column {
   id: root
 
@@ -77,12 +76,17 @@ Column {
     spacing: Style.space(6)
     height: Math.max(titleLabel.implicitHeight, root.removeSize)
 
-    PanelSectionHeader {
+    Text {
       id: titleLabel
       width: parent.width - (root.needPager ? (root.removeSize * 2 + parent.spacing * 2) : 0)
       text: root.titleText
-      foreground: root.foreground
-      fontFamily: root.fontFamily
+      textFormat: Text.PlainText
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+      font.bold: true
+      verticalAlignment: Text.AlignVCenter
+      height: parent.height
     }
 
     Button {
@@ -164,26 +168,28 @@ Column {
     }
   }
 
-  PanelSeparator {
-    foreground: root.foreground
-    strength: 0.14
-  }
-
-  Button {
+  Row {
     width: parent.width
-    text: "Pick window"
-    enabled: !root.busy
-    foreground: root.foreground
-    fontFamily: root.fontFamily
-    onClicked: root.requestPick()
-  }
+    spacing: Style.space(8)
 
-  Button {
-    width: parent.width
-    text: root.emptyText
-    enabled: !root.busy && root.itemCount > 0
-    foreground: root.foreground
-    fontFamily: root.fontFamily
-    onClicked: root.emptyList()
+    Button {
+      width: emptyListButton.visible ? parent.width - emptyListButton.width - parent.spacing : parent.width
+      text: "Pick window"
+      enabled: !root.busy
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      onClicked: root.requestPick()
+    }
+
+    Button {
+      id: emptyListButton
+      visible: root.itemCount > 0
+      width: visible ? implicitWidth : 0
+      text: root.emptyText
+      enabled: !root.busy
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      onClicked: root.emptyList()
+    }
   }
 }

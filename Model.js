@@ -59,7 +59,7 @@ function parseStatus(text) {
     outputDir: capString(status.outputDir || "", 512),
     lastClip: capString(status.lastClip || "", 512),
     saving: boundedInteger(status.saving, 0, 0, 99),
-    phase: String(status.phase || (status.running === true ? "live" : "off")),
+    phase: status.running === true && !status.phase ? "live" : String(status.phase || ""),
     armed: status.armed === true || status.phase === "armed",
     linger: status.linger === true || status.phase === "linger",
     subject: capString(status.subject || "", 128),
@@ -417,24 +417,40 @@ function savingLabel(count) {
   return "Saving " + n
 }
 
-function statusLabel(status) {
-  if (!status) return "Buffer off"
+function modeStatusName(mode) {
+  var options = modeOptions()
+  var value = normalizeMode(mode)
+  var i
+  for (i = 0; i < options.length; i++) {
+    if (options[i].value === value) return options[i].label
+  }
+  return "Monitor"
+}
+
+function sessionIsOn(status) {
+  if (!status) return false
+  return status.running === true || status.phase === "armed" || status.phase === "linger" || status.armed === true || status.linger === true
+}
+
+function statusHeadline(status, mode) {
+  if (!sessionIsOn(status)) return "Disabled"
+  return modeStatusName(mode || (status && status.mode))
+}
+
+function statusDetail(status) {
+  if (!status) return ""
   var saving = savingLabel(status.saving)
-  if (status.phase === "armed" || status.armed === true) {
-    return saving ? saving + " · Armed" : "Armed"
-  }
-  if (status.phase === "linger" || status.linger === true) {
-    var lingerMon = status.monitor || "monitor"
-    var linger = "Linger · " + lingerMon
-    return saving ? saving + " · " + linger : linger
-  }
-  if (status.running !== true) {
-    if (saving) return saving
-    return "Buffer off"
-  }
-  var monitor = status.monitor || "monitor"
-  var live = monitor + " · last " + formatReplayLength(status.seconds)
-  return saving ? saving + " · " + live : live
+  if (saving) return saving
+  if (!sessionIsOn(status)) return ""
+  if (status.phase === "armed" || status.armed === true) return "Armed"
+  return "recording last " + formatReplayLength(status.seconds)
+}
+
+function statusLabel(status, mode) {
+  var head = statusHeadline(status, mode)
+  var detail = statusDetail(status)
+  if (!detail || detail === head) return head
+  return head + " · " + detail
 }
 
 function modeOptions() {

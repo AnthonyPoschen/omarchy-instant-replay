@@ -22,6 +22,7 @@ Panel {
   property string focusSection: "toggle"
   property bool cursorActive: false
   property bool extrasEncoderOpen: false
+  property bool extrasModeOpen: false
   property string hotkeyCopyStatus: ""
   property string clipCopyStatus: ""
   property var commandQueue: []
@@ -237,8 +238,16 @@ Panel {
     return path.slice(0, slash)
   }
 
-  function openLastClipFolder() {
-    var dir = root.lastClipFolder()
+  function clipsFolderPath() {
+    var dir = String(root.configuredOutputDir || "")
+    if (dir.charAt(0) === "/" && dir.indexOf("\n") === -1) return dir
+    dir = String(root.status.outputDir || "")
+    if (dir.charAt(0) === "/" && dir.indexOf("\n") === -1) return dir
+    return root.lastClipFolder()
+  }
+
+  function openClipsFolder() {
+    var dir = root.clipsFolderPath()
     if (dir === "") return
     Quickshell.execDetached(["/usr/bin/xdg-open", "--", dir])
   }
@@ -284,7 +293,7 @@ Panel {
     Qt.callLater(function() {
       if (folderPickProc.running) return
       root.folderOut = ""
-      folderPickProc.command = ["omarchy-file-select", "--directory", "--title", "Clips folder"]
+      folderPickProc.command = ["omarchy-file-select", "--directory", "--title", "Output folder"]
       folderPickProc.running = true
     })
   }
@@ -294,7 +303,8 @@ Panel {
     root.resumeAttempted = true
     if (root.running) return
     var phase = String(root.status.phase || "")
-    if (phase === "live" || phase === "armed" || phase === "linger")
+    if (phase === "off") return
+    if (phase === "live" || phase === "armed" || phase === "linger" || phase === "")
       root.startBuffer()
   }
 
@@ -443,12 +453,70 @@ Panel {
         anchors.top: parent.top
         spacing: Style.space(10)
 
-        PanelHero {
-          title: "Instant Replay"
-          meta: Model.plainLabel(Model.statusLabel(root.status), 180)
-          detail: ""
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
+        Item {
+          id: header
+          width: parent.width
+          implicitHeight: Math.max(heroLabels.implicitHeight, powerSwitch.implicitHeight)
+          readonly property color dim: Qt.darker(root.contentForeground, 1.4)
+
+          Column {
+            id: heroLabels
+            anchors.left: parent.left
+            anchors.right: powerSwitch.left
+            anchors.rightMargin: Style.space(12)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+
+            Text {
+              width: parent.width
+              text: "Instant Replay"
+              textFormat: Text.PlainText
+              color: root.contentForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+              elide: Text.ElideRight
+            }
+
+            Text {
+              width: parent.width
+              visible: text !== ""
+              text: Model.plainLabel(Model.statusHeadline(root.status, root.configuredMode), 80).toUpperCase()
+              textFormat: Text.PlainText
+              wrapMode: Text.Wrap
+              color: header.dim
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 1.2
+            }
+
+            Text {
+              width: parent.width
+              visible: text !== ""
+              text: Model.plainLabel(Model.statusDetail(root.status), 80).toUpperCase()
+              textFormat: Text.PlainText
+              wrapMode: Text.Wrap
+              color: header.dim
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 1.2
+            }
+          }
+
+          ToggleSwitch {
+            id: powerSwitch
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            checked: root.sessionOn
+            busy: root.busy
+            foreground: root.contentForeground
+            onToggled: {
+              if (root.busy) return
+              root.sessionOn ? root.stopBuffer() : root.startBuffer()
+            }
+          }
         }
 
         Text {
@@ -462,31 +530,76 @@ Panel {
           font.pixelSize: Style.font.body
         }
 
-        Toggle {
-          width: parent.width
-          label: "Replay buffer"
-          description: root.running ? "Live. Left-click the bar icon to save." : (root.armed ? "Armed. Waiting for a window." : "Off. Nothing is being captured.")
-          checked: root.sessionOn
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onClicked: {
-            if (root.busy) return
-            root.sessionOn ? root.stopBuffer() : root.startBuffer()
-          }
-        }
-
         Column {
           width: parent.width
           spacing: Style.space(6)
-          visible: String(root.status.lastClip || "") !== ""
-          height: visible ? implicitHeight : 0
 
           Text {
             width: parent.width
-            text: Model.plainLabel(root.status.lastClip, 256)
+            text: "Replays"
             textFormat: Text.PlainText
-            elide: Text.ElideMiddle
-            color: Qt.darker(root.contentForeground, 1.3)
+            color: root.contentForeground
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.body
+            font.bold: true
+          }
+
+          Button {
+            width: parent.width
+            visible: root.running
+            height: visible ? implicitHeight : 0
+            text: "Save"
+            enabled: !root.busy
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.save()
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.space(4)
+            visible: String(root.status.lastClip || "") !== ""
+            height: visible ? implicitHeight : 0
+
+            Text {
+              text: "Last save"
+              textFormat: Text.PlainText
+              color: Qt.darker(root.contentForeground, 1.5)
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              Text {
+                width: parent.width - copyClipButton.width - parent.spacing
+                text: Model.plainLabel(root.status.lastClip, 256)
+                textFormat: Text.PlainText
+                elide: Text.ElideMiddle
+                color: Qt.darker(root.contentForeground, 1.3)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+                verticalAlignment: Text.AlignVCenter
+                height: copyClipButton.height
+              }
+
+              Button {
+                id: copyClipButton
+                text: root.clipCopyStatus !== "" ? root.clipCopyStatus : "Copy file"
+                enabled: !root.busy
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+                onClicked: root.copyLastClip()
+              }
+            }
+          }
+
+          Text {
+            text: "Output folder"
+            textFormat: Text.PlainText
+            color: Qt.darker(root.contentForeground, 1.5)
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
@@ -495,157 +608,179 @@ Panel {
             width: parent.width
             spacing: Style.space(8)
 
-            Button {
-              id: copyClipButton
-              width: (parent.width - parent.spacing) / 2
-              text: root.clipCopyStatus !== "" ? root.clipCopyStatus : "Copy file"
-              enabled: !root.busy
+            TextField {
+              id: outputDirField
+              width: parent.width - browseFolderButton.width - parent.spacing
+              text: root.configuredOutputDir
+              placeholderText: root.status.outputDir !== "" ? Model.plainLabel(root.status.outputDir, 80) : "Videos/Replays"
+              maximumLength: 512
               foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
-              onClicked: root.copyLastClip()
+              onEditingFinished: {
+                if (root.configuredOutputDir === text) return
+                root.applySetting("outputDir", text)
+              }
             }
 
             Button {
-              width: (parent.width - parent.spacing) / 2
-              text: "Open folder"
-              enabled: !root.busy && root.lastClipFolder() !== ""
+              id: browseFolderButton
+              text: "Choose"
+              enabled: !folderPickProc.running
               foreground: root.contentForeground
               fontFamily: root.contentFontFamily
-              onClicked: root.openLastClipFolder()
+              onClicked: root.pickOutputDir()
             }
+          }
+
+          Button {
+            width: parent.width
+            text: "Open folder"
+            enabled: !root.busy && root.clipsFolderPath() !== ""
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.openClipsFolder()
           }
         }
 
         PanelSeparator {}
 
-        Dropdown {
-          id: modeDropdown
-          width: parent.width
-          label: "Mode"
-          value: root.configuredMode
-          options: root.modeChoices
+        ExtraGroup {
+          title: "Recording mode"
+          open: root.extrasModeOpen
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
-          onChanged: function(value) { root.applySetting("mode", Model.normalizeMode(value)) }
-        }
+          onToggled: root.extrasModeOpen = !root.extrasModeOpen
 
-        Dropdown {
-          id: filterDropdown
-          width: parent.width
-          visible: root.configuredMode === "follow"
-          label: "Filter"
-          value: root.configuredFilter
-          options: root.filterChoices
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onChanged: function(value) { root.applySetting("filter", Model.normalizeFilter(value)) }
-        }
-
-        ClassListEditor {
-          width: parent.width
-          visible: root.configuredMode === "follow" && root.configuredFilter === "allowlist"
-          height: visible ? implicitHeight : 0
-          title: "Allowlist"
-          emptyText: "Empty allowlist"
-          listSource: root.configuredMatchList
-          panelOpen: root.opened
-          busy: root.busy
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onRequestPick: root.pickMatchWindow()
-          onEmptyList: root.applyMatchList("")
-          onRemoveAt: function(index) {
-            root.applyMatchList(Model.removeListItem(root.configuredMatchList, index))
-          }
-        }
-
-        ClassListEditor {
-          width: parent.width
-          visible: root.configuredMode === "follow" && root.configuredFilter === "denylist"
-          height: visible ? implicitHeight : 0
-          title: "Blacklist"
-          emptyText: "Empty blacklist"
-          listSource: root.configuredBlacklist
-          panelOpen: root.opened
-          busy: root.busy
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onRequestPick: root.pickBlacklistWindow()
-          onEmptyList: root.applyBlacklist("")
-          onRemoveAt: function(index) {
-            root.applyBlacklist(Model.removeListItem(root.configuredBlacklist, index))
-          }
-        }
-
-        Dropdown {
-          id: monitorDropdown
-          width: parent.width
-          visible: root.configuredMode === "monitor"
-          label: "Monitor"
-          value: root.configuredMonitor
-          options: root.monitorChoices
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onChanged: function(value) { root.applySetting("monitor", value) }
-        }
-
-        Row {
-          width: parent.width
-          spacing: Style.space(8)
-          visible: root.configuredMode === "pin"
-          height: visible ? implicitHeight : 0
-
-          Text {
-            width: parent.width - pickWindowButton.width - parent.spacing
-            text: String(root.status.subject || "") !== "" ? ("Pinned · " + Model.plainLabel(root.status.subject, 80)) : (root.configuredPinAddress !== "" ? ("Pinned · " + Model.plainLabel(root.configuredPinAddress, 32)) : "No window yet")
-            textFormat: Text.PlainText
-            elide: Text.ElideMiddle
-            color: root.contentForeground
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.body
-            verticalAlignment: Text.AlignVCenter
-            height: pickWindowButton.height
-          }
-
-          Button {
-            id: pickWindowButton
-            text: "Pick window"
-            enabled: !root.busy
+          ReplayDropdown {
+            id: modeDropdown
+            width: parent.width
+            label: "Mode"
+            value: root.configuredMode
+            options: root.modeChoices
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
-            onClicked: root.pickWindow()
-          }
-        }
-
-        Row {
-          width: parent.width
-          spacing: Style.space(8)
-          visible: root.configuredMode === "region"
-          height: visible ? implicitHeight : 0
-
-          Text {
-            width: parent.width - pickRegionButton.width - parent.spacing
-            text: root.configuredRegion !== "" ? Model.plainLabel(root.configuredRegion, 64) : "No rectangle yet"
-            textFormat: Text.PlainText
-            elide: Text.ElideMiddle
-            color: root.contentForeground
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.body
-            verticalAlignment: Text.AlignVCenter
-            height: pickRegionButton.height
+            onChanged: function(value) { root.applySetting("mode", Model.normalizeMode(value)) }
           }
 
-          Button {
-            id: pickRegionButton
-            text: "Pick region"
-            enabled: !root.busy
+          ReplayDropdown {
+            id: filterDropdown
+            width: parent.width
+            visible: root.configuredMode === "follow"
+            height: visible ? implicitHeight : 0
+            label: "Filter"
+            value: root.configuredFilter
+            options: root.filterChoices
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
-            onClicked: root.pickRegion()
+            onChanged: function(value) { root.applySetting("filter", Model.normalizeFilter(value)) }
+          }
+
+          ClassListEditor {
+            width: parent.width
+            visible: root.configuredMode === "follow" && root.configuredFilter === "allowlist"
+            height: visible ? implicitHeight : 0
+            title: "Allowlist"
+            emptyText: "Empty allowlist"
+            listSource: root.configuredMatchList
+            panelOpen: root.opened
+            busy: root.busy
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onRequestPick: root.pickMatchWindow()
+            onEmptyList: root.applyMatchList("")
+            onRemoveAt: function(index) {
+              root.applyMatchList(Model.removeListItem(root.configuredMatchList, index))
+            }
+          }
+
+          ClassListEditor {
+            width: parent.width
+            visible: root.configuredMode === "follow" && root.configuredFilter === "denylist"
+            height: visible ? implicitHeight : 0
+            title: "Blacklist"
+            emptyText: "Empty blacklist"
+            listSource: root.configuredBlacklist
+            panelOpen: root.opened
+            busy: root.busy
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onRequestPick: root.pickBlacklistWindow()
+            onEmptyList: root.applyBlacklist("")
+            onRemoveAt: function(index) {
+              root.applyBlacklist(Model.removeListItem(root.configuredBlacklist, index))
+            }
+          }
+
+          ReplayDropdown {
+            id: monitorDropdown
+            width: parent.width
+            visible: root.configuredMode === "monitor"
+            height: visible ? implicitHeight : 0
+            label: "Monitor"
+            value: root.configuredMonitor
+            options: root.monitorChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("monitor", value) }
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+            visible: root.configuredMode === "pin"
+            height: visible ? implicitHeight : 0
+
+            Text {
+              width: parent.width - pickWindowButton.width - parent.spacing
+              text: String(root.status.subject || "") !== "" ? ("Pinned · " + Model.plainLabel(root.status.subject, 80)) : (root.configuredPinAddress !== "" ? ("Pinned · " + Model.plainLabel(root.configuredPinAddress, 32)) : "No window yet")
+              textFormat: Text.PlainText
+              elide: Text.ElideMiddle
+              color: root.contentForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.body
+              verticalAlignment: Text.AlignVCenter
+              height: pickWindowButton.height
+            }
+
+            Button {
+              id: pickWindowButton
+              text: "Pick window"
+              enabled: !root.busy
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: root.pickWindow()
+            }
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+            visible: root.configuredMode === "region"
+            height: visible ? implicitHeight : 0
+
+            Text {
+              width: parent.width - pickRegionButton.width - parent.spacing
+              text: root.configuredRegion !== "" ? Model.plainLabel(root.configuredRegion, 64) : "No rectangle yet"
+              textFormat: Text.PlainText
+              elide: Text.ElideMiddle
+              color: root.contentForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.body
+              verticalAlignment: Text.AlignVCenter
+              height: pickRegionButton.height
+            }
+
+            Button {
+              id: pickRegionButton
+              text: "Pick region"
+              enabled: !root.busy
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: root.pickRegion()
+            }
           }
         }
 
-        Dropdown {
+        ReplayDropdown {
           id: secondsDropdown
           width: parent.width
           label: "Replay Window"
@@ -656,7 +791,7 @@ Panel {
           onChanged: function(value) { root.applySetting("seconds", Model.boundedInteger(value, 60, Model.minSeconds(), Model.maxSeconds())) }
         }
 
-        Dropdown {
+        ReplayDropdown {
           id: audioDropdown
           width: parent.width
           label: "Audio"
@@ -667,10 +802,10 @@ Panel {
           onChanged: function(value) { root.applySetting("audio", Model.normalizeAudio(value)) }
         }
 
-        Dropdown {
+        ReplayDropdown {
           id: clipResolutionDropdown
           width: parent.width
-          label: "Clip resolution"
+          label: "Resolution"
           value: root.configuredClipResolution
           options: root.clipResolutionChoices
           foreground: root.contentForeground
@@ -678,60 +813,15 @@ Panel {
           onChanged: function(value) { root.applySetting("clipResolution", Model.normalizeClipResolution(value)) }
         }
 
-        Dropdown {
+        ReplayDropdown {
           id: clipScaleDropdown
           width: parent.width
-          label: "Clip layout"
+          label: "Layout"
           value: root.configuredClipScale
           options: root.clipScaleChoices
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
           onChanged: function(value) { root.applySetting("clipScale", Model.normalizeClipScale(value)) }
-        }
-
-        Text {
-          text: "Clips folder"
-          textFormat: Text.PlainText
-          color: Qt.darker(root.contentForeground, 1.4)
-          font.family: root.contentFontFamily
-          font.pixelSize: Style.font.caption
-          font.bold: true
-        }
-
-        Row {
-          width: parent.width
-          spacing: Style.space(8)
-
-          TextField {
-            id: outputDirField
-            width: parent.width - browseFolderButton.width - parent.spacing
-            text: root.configuredOutputDir
-            placeholderText: root.status.outputDir !== "" ? Model.plainLabel(root.status.outputDir, 80) : "Videos/Replays"
-            maximumLength: 512
-            foreground: root.contentForeground
-            onEditingFinished: {
-              if (root.configuredOutputDir === text) return
-              root.applySetting("outputDir", text)
-            }
-          }
-
-          Button {
-            id: browseFolderButton
-            text: "Choose"
-            enabled: !folderPickProc.running
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.pickOutputDir()
-          }
-        }
-
-        Button {
-          width: parent.width
-          text: root.running ? "Save replay" : (root.armed ? "Armed" : "Start buffer")
-          enabled: !root.busy && !(root.armed && !root.running)
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onClicked: root.running ? root.save() : root.startBuffer()
         }
 
         PanelSeparator {}
@@ -743,7 +833,7 @@ Panel {
           fontFamily: root.contentFontFamily
           onToggled: root.extrasEncoderOpen = !root.extrasEncoderOpen
 
-          Dropdown {
+          ReplayDropdown {
             id: codecDropdown
             width: parent.width
             label: "Codec"
@@ -754,7 +844,7 @@ Panel {
             onChanged: function(value) { root.applySetting("codec", Model.normalizeCodec(value)) }
           }
 
-          Dropdown {
+          ReplayDropdown {
             id: fpsDropdown
             width: parent.width
             label: "FPS"
@@ -765,7 +855,7 @@ Panel {
             onChanged: function(value) { root.applySetting("fps", Model.boundedInteger(value, 60, Model.minFps(), Model.maxFps())) }
           }
 
-          Dropdown {
+          ReplayDropdown {
             id: qualityDropdown
             width: parent.width
             label: "Quality"
@@ -776,7 +866,7 @@ Panel {
             onChanged: function(value) { root.applySetting("quality", Model.boundedInteger(value, 40000, Model.minQuality(), Model.maxQuality())) }
           }
 
-          Dropdown {
+          ReplayDropdown {
             id: framerateDropdown
             width: parent.width
             label: "Framerate mode"
@@ -787,7 +877,7 @@ Panel {
             onChanged: function(value) { root.applySetting("framerateMode", Model.normalizeFramerateMode(value)) }
           }
 
-          Dropdown {
+          ReplayDropdown {
             id: bitrateDropdown
             width: parent.width
             label: "Bitrate mode"
