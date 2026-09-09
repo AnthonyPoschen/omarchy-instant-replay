@@ -467,7 +467,7 @@ h264_codec=$(awk '$0=="-k"{getline; print; exit}' "$SHADOWPLAY_FAKE_DIR/gsr.args
 "$helper" stop >/dev/null
 "$helper" settings set codec auto >/dev/null
 
-# Follow Filter=All: Armed, Live, Sticky, Linger, Split
+# Follow Filter=All: Live (no Subject still records), Sticky, Linger, Split
 windows_file="$work/windows.json"
 monitors_file="$work/monitors.json"
 export SHADOWPLAY_WINDOWS_FILE="$windows_file"
@@ -487,9 +487,10 @@ write_windows '[{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":t
 export SHADOWPLAY_NOW=6000
 "$helper" start >/dev/null
 status=$("$helper" status --json)
-echo "$status" | jq -e '.mode == "follow" and .filter == "all" and .armed == true and .running == false and .phase == "armed"' >/dev/null \
-  || fail "follow autostart should Arm without Live: $status"
-[[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Armed launched a Replay Buffer on chrome"
+echo "$status" | jq -e '.mode == "follow" and .filter == "all" and .running == true and .phase == "live" and .monitor == "DP-1" and .subject == null' >/dev/null \
+  || fail "follow Enable should record the monitor when only chrome is focused: $status"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Enable did not start a Replay Buffer"
+echo "$status" | jq -e '.subject != "waybar"' >/dev/null || fail "Filter=All should not follow chrome as Subject: $status"
 
 write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
 status=$("$helper" tick)
@@ -497,6 +498,7 @@ echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "D
   || fail "focusing a normal window should go Live: $status"
 assert_file_contains "$SHADOWPLAY_FAKE_DIR/gsr.args" "DP-1"
 [[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Live did not launch the recorder"
+rm -f "$segment_index"
 
 write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"waybar","monitor":"DP-1","address":"0xbar","focused":true}]'
 status=$("$helper" tick)
@@ -527,9 +529,9 @@ status=$("$helper" tick)
 echo "$status" | jq -e '.phase == "linger"' >/dev/null || fail "close again should Linger: $status"
 export SHADOWPLAY_NOW=6060
 status=$("$helper" tick)
-echo "$status" | jq -e '.armed == true and .running == false and .phase == "armed"' >/dev/null \
-  || fail "Linger should return to Armed after one Replay Window: $status"
-[[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Linger expiry left the recorder Live"
+echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "DP-1" and .subject == null' >/dev/null \
+  || fail "Linger should keep recording the monitor after one Replay Window: $status"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Linger expiry stopped the Replay Buffer"
 
 write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
 export SHADOWPLAY_NOW=7000
@@ -931,13 +933,15 @@ write_windows '[{"class":"discord","title":"Friends","monitor":"DP-1","address":
 export SHADOWPLAY_NOW=10000
 "$helper" start >/dev/null
 status=$("$helper" status --json)
-echo "$status" | jq -e '.armed == true and .running == false and .phase == "armed"' >/dev/null \
-  || fail "allowlist should Arm on a non-match: $status"
+echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "DP-1" and .subject == null' >/dev/null \
+  || fail "allowlist should record the monitor on a non-match: $status"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "allowlist Enable did not start a Replay Buffer"
 
 write_windows '[{"class":"firefox","title":"Mozilla Firefox","initialClass":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
 status=$("$helper" tick)
 echo "$status" | jq -e '.running == true and .phase == "live" and .subject == "firefox" and .monitor == "DP-1"' >/dev/null \
   || fail "allowlist focused match should go Live: $status"
+rm -f "$segment_index"
 
 write_windows '[{"class":"firefox","title":"Mozilla Firefox","monitor":"DP-1","address":"0xff","focused":false},{"class":"discord","title":"Friends","monitor":"DP-1","address":"0xdc","focused":true}]'
 status=$("$helper" tick)
@@ -991,7 +995,7 @@ write_windows '[{"class":"discord","title":"Firefox","monitor":"DP-1","address":
 export SHADOWPLAY_NOW=10500
 "$helper" start >/dev/null
 status=$("$helper" status --json)
-echo "$status" | jq -e '.armed == true and .running == false and .phase == "armed"' >/dev/null \
+echo "$status" | jq -e '.running == true and .phase == "live" and .subject == null' >/dev/null \
   || fail "title must not match Match List rules: $status"
 
 write_windows '[{"class":"Navigator","initialClass":"firefox","title":"Mozilla Firefox","monitor":"DP-1","address":"0xff","focused":true}]'
@@ -1081,8 +1085,8 @@ echo "$status" | jq -e '.mode == "monitor" and .running == false and .phase == "
   || fail "stop then monitor should be Off: $status"
 "$helper" settings set mode pin >/dev/null
 status=$("$helper" status --json)
-echo "$status" | jq -e '.mode == "pin" and .running == false and .phase == "off" and .armed != true' >/dev/null \
-  || fail "selecting Pin while Off should stay Off, not Armed: $status"
+echo "$status" | jq -e '.mode == "pin" and .running == false and .phase == "off"' >/dev/null \
+  || fail "selecting Pin while Off should stay Off: $status"
 
 "$helper" settings set pinAddress "" >/dev/null
 write_windows '[{"class":"firefox","monitor":"DP-1","address":"0xff","focused":true}]'
@@ -1100,7 +1104,7 @@ if "$helper" start >/dev/null 2>"$work/pin-empty-err"; then
 fi
 grep -qi 'window' "$work/pin-empty-err" || fail "pin empty error was unclear: $(<"$work/pin-empty-err")"
 status=$("$helper" status --json)
-echo "$status" | jq -e '.running == false and .armed != true and .phase != "armed"' >/dev/null \
+echo "$status" | jq -e '.running == false and .phase == "off"' >/dev/null \
   || fail "failed pin Enable should stay Off: $status"
 
 # Monitor Save after Follow must not keep the window crop on the live buffer.
@@ -1141,9 +1145,10 @@ export SHADOWPLAY_NOW=12100
 "$helper" settings set filter all >/dev/null
 "$helper" start >/dev/null
 status=$("$helper" status --json)
-echo "$status" | jq -e '.armed == true and .running == false and .phase == "armed"' >/dev/null \
-  || fail "Filter=All should Arm on org.quickshell, not follow the shell: $status"
-[[ ! -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Armed launched a Replay Buffer on Omarchy chrome"
+echo "$status" | jq -e '.running == true and .phase == "live" and .monitor == "DP-1" and .subject == null' >/dev/null \
+  || fail "Filter=All should record the monitor on org.quickshell, not follow the shell: $status"
+[[ -e $SHADOWPLAY_FAKE_DIR/running ]] || fail "Enable did not start a Replay Buffer"
+echo "$status" | jq -e '.subject != "org.quickshell"' >/dev/null || fail "Filter=All followed Quickshell as Subject: $status"
 "$helper" stop
 
 if "$helper" settings set codec not-a-codec >/dev/null 2>"$work/codec-err"; then

@@ -60,7 +60,6 @@ function parseStatus(text) {
     lastClip: capString(status.lastClip || "", 512),
     saving: boundedInteger(status.saving, 0, 0, 99),
     phase: status.running === true && !status.phase ? "live" : String(status.phase || ""),
-    armed: status.armed === true || status.phase === "armed",
     linger: status.linger === true || status.phase === "linger",
     subject: capString(status.subject || "", 128),
     region: capString(status.region || "", 64),
@@ -428,13 +427,12 @@ function modeStatusName(mode) {
 }
 
 function sessionIsOn(status) {
-  if (!status) return false
-  return status.running === true || status.phase === "armed" || status.phase === "linger" || status.armed === true || status.linger === true
+  return !!(status && status.running === true)
 }
 
 function statusHeadline(status, mode) {
   if (!sessionIsOn(status)) return "Disabled"
-  return modeStatusName(mode || (status && status.mode))
+  return "Recording"
 }
 
 function statusDetail(status) {
@@ -442,8 +440,7 @@ function statusDetail(status) {
   var saving = savingLabel(status.saving)
   if (saving) return saving
   if (!sessionIsOn(status)) return ""
-  if (status.phase === "armed" || status.armed === true) return "Armed"
-  return "recording last " + formatReplayLength(status.seconds)
+  return modeStatusName(status.mode) + " · last " + formatReplayLength(status.seconds)
 }
 
 function statusLabel(status, mode) {

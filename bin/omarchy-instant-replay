@@ -1411,15 +1411,21 @@ launch_recorder() {
       AUDIO_APP=${AUDIO_APP//|/}
     fi
   fi
-  case "$audio" in
+  # No Subject yet: still encode the output. Window audio attaches when a Subject appears.
+  local gsr_audio="$audio"
+  if [[ -z $AUDIO_APP ]]; then
+    case "$audio" in
+    window) gsr_audio=desktop ;;
+    window-mic) gsr_audio=both ;;
+    esac
+  fi
+  case "$gsr_audio" in
   desktop) gsr_args+=(-a default_output -ac aac) ;;
   both) gsr_args+=(-a "default_output|default_input" -ac aac) ;;
   window)
-    [[ -n $AUDIO_APP ]] || die "couldn't find audio for this window"
     gsr_args+=(-a "app:${AUDIO_APP}" -ac aac)
     ;;
   window-mic)
-    [[ -n $AUDIO_APP ]] || die "couldn't find audio for this window"
     gsr_args+=(-a "app:${AUDIO_APP}|default_input" -ac aac)
     ;;
   none) ;;
@@ -2160,15 +2166,26 @@ subject_audio_app() {
 follow_session_active() {
   local phase
   phase=$(activity_value phase)
-  [[ $phase == armed || $phase == live || $phase == linger ]]
+  [[ $phase == live || $phase == linger || $phase == armed ]]
 }
 
-go_armed() {
-  if buffer_running; then
-    stop_recorder
-    discard_all_segments
+# Session on with no Subject: keep encoding the current Buffer Target.
+go_live_on_monitor() {
+  local monitor="${1:-}"
+  if [[ -z $monitor ]]; then
+    monitor=$(resolve_monitor)
   fi
-  write_activity false "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" armed "-" "-" "-" "-"
+  local saved="$CONFIG_MONITOR"
+  CONFIG_MONITOR="$monitor"
+  if buffer_running; then
+    if live_capture_differs "$monitor"; then
+      split_and_restart
+    fi
+  else
+    launch_recorder
+  fi
+  CONFIG_MONITOR="$saved"
+  write_activity true "$monitor" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "$(activity_value started)" live "-" "-" "-" full
 }
 
 go_live_on() {
@@ -2340,11 +2357,20 @@ cmd_follow_tick() {
     fi
   fi
 
-  if [[ $phase == live ]]; then
-    if buffer_running; then
-      enter_linger
+  local target_mon="${monitor:-}"
+  if [[ -z $target_mon ]]; then
+    if [[ -n $win_mon ]]; then
+      target_mon="$win_mon"
     else
-      go_armed
+      target_mon=$(resolve_monitor)
+    fi
+  fi
+
+  if [[ $phase == live ]]; then
+    if buffer_running && [[ -n $subject_class || -n $subject_address ]]; then
+      enter_linger
+    elif ! buffer_running; then
+      go_live_on_monitor "$target_mon"
     fi
     return 0
   fi
@@ -2353,10 +2379,12 @@ cmd_follow_tick() {
     local now
     now=$(now_epoch)
     if [[ $linger_until =~ ^[0-9]+$ ]] && (( now >= linger_until )); then
-      go_armed
+      go_live_on_monitor "$target_mon"
     fi
     return 0
   fi
+
+  go_live_on_monitor "$target_mon"
 }
 
 # Pin with no stored window: take the focused client, like Monitor pins the
@@ -2394,15 +2422,19 @@ cmd_pin_tick() {
   fi
 
   if [[ -z $CONFIG_PIN_ADDRESS ]]; then
-    if [[ $phase == live || $phase == linger ]]; then
-      if buffer_running && [[ $phase == live ]]; then
+    if [[ $phase == live || $phase == linger || $phase == armed ]]; then
+      local target_mon="${monitor:-}"
+      [[ -n $target_mon ]] || target_mon=$(resolve_monitor)
+      if buffer_running && [[ $phase == live ]] && [[ -n $(activity_value subject_class) || -n $(activity_value subject_address) ]]; then
         enter_linger
       elif [[ $phase == linger ]]; then
         local now
         now=$(now_epoch)
         if [[ $linger_until =~ ^[0-9]+$ ]] && (( now >= linger_until )); then
-          go_armed
+          go_live_on_monitor "$target_mon"
         fi
+      else
+        go_live_on_monitor "$target_mon"
       fi
     fi
     return 0
@@ -2428,11 +2460,14 @@ cmd_pin_tick() {
     return 0
   fi
 
+  local target_mon="${monitor:-$win_mon}"
+  [[ -n $target_mon ]] || target_mon=$(resolve_monitor)
+
   if [[ $phase == live ]]; then
-    if buffer_running; then
+    if buffer_running && [[ -n $(activity_value subject_class) || -n $(activity_value subject_address) ]]; then
       enter_linger
-    else
-      go_armed
+    elif ! buffer_running; then
+      go_live_on_monitor "$target_mon"
     fi
     return 0
   fi
@@ -2441,9 +2476,12 @@ cmd_pin_tick() {
     local now
     now=$(now_epoch)
     if [[ $linger_until =~ ^[0-9]+$ ]] && (( now >= linger_until )); then
-      go_armed
+      go_live_on_monitor "$target_mon"
     fi
+    return 0
   fi
+
+  go_live_on_monitor "$target_mon"
 }
 
 cmd_tick() {
@@ -2466,7 +2504,7 @@ cmd_start() {
       die "Pin Mode needs a window. Pick a window first."
     fi
     if ! follow_session_active; then
-      write_activity false "" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" armed "-" "-" "-"
+      write_activity false "" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" live "-" "-" "-"
     fi
     cmd_tick
     cmd_status --json
@@ -2597,7 +2635,7 @@ print_status_json() {
   printf '"outputDir":%s,' "$(json_string "$(output_dir)")"
   printf '"lastClip":%s,' "$(json_string_or_null "${6:-}")"
   printf '"saving":%s,' "$(saving_count)"
-  local phase armed linger
+  local phase linger
   phase=$(activity_value phase)
   if [[ -z $phase ]]; then
     if [[ $running == true ]]; then
@@ -2608,12 +2646,9 @@ print_status_json() {
       phase=""
     fi
   fi
-  armed=false
   linger=false
-  [[ $phase == armed ]] && armed=true
   [[ $phase == linger ]] && linger=true
   printf '"phase":%s,' "$(json_string "$phase")"
-  printf '"armed":%s,' "$(json_bool "$armed")"
   printf '"linger":%s,' "$(json_bool "$linger")"
   printf '"subject":%s,' "$(json_string_or_null "$(activity_value subject_class)")"
   printf '"region":%s,' "$(json_string "$CONFIG_REGION")"
@@ -2923,7 +2958,7 @@ cmd_settings_set() {
           write_activity false "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" off "-" "-" "-" "-"
           die "Pin Mode needs a window. Pick a window first."
         fi
-        write_activity false "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" armed "-" "-" "-"
+        write_activity false "$(activity_value monitor)" "$CONFIG_SECONDS" "$CONFIG_AUDIO" "$(activity_value last_clip)" "" live "-" "-" "-"
         cmd_tick
       else
         launch_recorder

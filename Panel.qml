@@ -14,7 +14,7 @@ Panel {
   property var anchorItem: null
   property var hostWidget: null
   property string helperPath: ""
-  property var status: ({ running: false, monitor: "", seconds: 60, audio: "desktop", lastClip: "", saving: 0, phase: "off", armed: false, linger: false, subject: "" })
+  property var status: ({ running: false, monitor: "", seconds: 60, audio: "desktop", lastClip: "", saving: 0, phase: "off", linger: false, subject: "" })
   property var monitors: []
   property bool busy: false
   property bool resumeAttempted: false
@@ -39,8 +39,7 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property bool running: status.running === true
   readonly property int savingCount: Model.boundedInteger(status.saving, 0, 0, 99)
-  readonly property bool armed: status.armed === true || status.phase === "armed"
-  readonly property bool sessionOn: running || armed || status.phase === "linger" || status.linger === true
+  readonly property bool sessionOn: running
   readonly property string configuredMonitor: String(setting("monitor", "") || "")
   readonly property int configuredSeconds: Model.boundedInteger(setting("seconds", 60), 60, Model.minSeconds(), Model.maxSeconds())
   readonly property string configuredAudio: {
@@ -304,7 +303,7 @@ Panel {
     if (root.running) return
     var phase = String(root.status.phase || "")
     if (phase === "off") return
-    if (phase === "live" || phase === "armed" || phase === "linger" || phase === "")
+    if (phase === "live" || phase === "linger" || phase === "armed" || phase === "")
       root.startBuffer()
   }
 
