@@ -32,12 +32,12 @@ Left-click the disc in the bar to open Settings. The switch in the top-right tur
 | Right-click the disc | Save the last N seconds to a video file, while the buffer is recording. |
 | Middle-click the disc | Refresh status. |
 
-The disc is theme-colored when the buffer is off or waiting for a window, red while it is capturing, and three dots while a clip is encoding.
+The disc is theme-colored when the buffer is off or waiting, red while it is capturing, and three dots while a clip is encoding.
 
 Settings status is one of:
 
 - **RECORDING** — the buffer is capturing right now.
-- **WAITING** — the switch is on, but Follow Allowlist has no listed window yet, so nothing is being captured.
+- **WAITING** — the switch is on, but the current settings have no valid capture target, so nothing is being captured.
 - **DISABLED** — the buffer is off.
 
 **Save clip** writes a file. **Open clips** opens the folder. After a save, Settings shows that path with a copy icon (clipboard) and the Omacut icon (opens the file in Omacut to trim). Saving does not stop the buffer.
@@ -241,7 +241,7 @@ An older `~/.config/omarchy-shadowplay/` config is copied once if the new config
 
 **Capture will not start.** Only one screen capture can run. Stop `omarchy screenrecord` first. If the log says H.264 max resolution, use `auto` or `hevc`.
 
-**Settings says WAITING.** Follow Allowlist is on and no listed window is open. Nothing is being captured. Open a listed game, or change Filter.
+**Settings says WAITING.** The switch is on, but the current settings have no valid capture target. Nothing is being captured. Change mode or filter, or open a window those settings allow.
 
 **Window audio is silent.** The Hyprland class is not the PipeWire name. Java titles (RuneLite) are often `PipeWire ALSA [java]`. Check `"$helper" status --json` shows the right window, then Save again.
 
