@@ -618,6 +618,112 @@ Panel {
         PanelSeparator {}
 
         ExtraGroup {
+          title: "Replay"
+          open: root.extrasConfigOpen
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          onToggled: root.extrasConfigOpen = !root.extrasConfigOpen
+
+          Text {
+            text: "Output folder"
+            textFormat: Text.PlainText
+            color: Qt.darker(root.contentForeground, 1.5)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            TextField {
+              id: outputDirField
+              width: parent.width - browseFolderButton.width - parent.spacing
+              text: root.configuredOutputDir
+              placeholderText: root.status.outputDir !== "" ? Model.plainLabel(root.status.outputDir, 80) : "Videos/Replays"
+              maximumLength: 512
+              foreground: root.contentForeground
+              onEditingFinished: {
+                if (root.configuredOutputDir === text) return
+                root.applySetting("outputDir", text)
+              }
+            }
+
+            Button {
+              id: browseFolderButton
+              text: "Choose"
+              enabled: !folderPickProc.running
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: root.pickOutputDir()
+            }
+          }
+
+          ReplayDropdown {
+            id: secondsDropdown
+            width: parent.width
+            label: "Replay Window"
+            value: String(root.configuredSeconds)
+            options: root.secondsChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("seconds", Model.boundedInteger(value, 60, Model.minSeconds(), Model.maxSeconds())) }
+          }
+
+          ReplayDropdown {
+            id: audioDropdown
+            width: parent.width
+            label: "Audio"
+            value: root.configuredAudio
+            options: root.audioChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("audio", Model.normalizeAudio(value)) }
+          }
+
+          ReplayDropdown {
+            id: clipResolutionDropdown
+            width: parent.width
+            label: "Resolution"
+            value: root.configuredClipResolution
+            options: root.clipResolutionChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("clipResolution", Model.normalizeClipResolution(value)) }
+          }
+
+          ReplayDropdown {
+            id: clipScaleDropdown
+            width: parent.width
+            label: "Layout"
+            value: root.configuredClipScale
+            options: root.clipScaleChoices
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onChanged: function(value) { root.applySetting("clipScale", Model.normalizeClipScale(value)) }
+          }
+
+          Toggle {
+            width: parent.width
+            label: "Cursor"
+            description: "Include the pointer in the Replay Buffer."
+            checked: root.configuredCursor
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.applySetting("cursor", !root.configuredCursor)
+          }
+
+          Button {
+            width: parent.width
+            text: root.hotkeyCopyStatus !== "" ? root.hotkeyCopyStatus : "Copy keybinds"
+            enabled: !root.busy
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: root.copyHotkeys()
+          }
+        }
+
+        ExtraGroup {
           title: "Recording region"
           open: root.extrasModeOpen
           foreground: root.contentForeground
@@ -755,112 +861,6 @@ Panel {
         }
 
         ExtraGroup {
-          title: "Replay"
-          open: root.extrasConfigOpen
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-          onToggled: root.extrasConfigOpen = !root.extrasConfigOpen
-
-          Text {
-            text: "Output folder"
-            textFormat: Text.PlainText
-            color: Qt.darker(root.contentForeground, 1.5)
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          Row {
-            width: parent.width
-            spacing: Style.space(8)
-
-            TextField {
-              id: outputDirField
-              width: parent.width - browseFolderButton.width - parent.spacing
-              text: root.configuredOutputDir
-              placeholderText: root.status.outputDir !== "" ? Model.plainLabel(root.status.outputDir, 80) : "Videos/Replays"
-              maximumLength: 512
-              foreground: root.contentForeground
-              onEditingFinished: {
-                if (root.configuredOutputDir === text) return
-                root.applySetting("outputDir", text)
-              }
-            }
-
-            Button {
-              id: browseFolderButton
-              text: "Choose"
-              enabled: !folderPickProc.running
-              foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
-              onClicked: root.pickOutputDir()
-            }
-          }
-
-          ReplayDropdown {
-            id: secondsDropdown
-            width: parent.width
-            label: "Replay Window"
-            value: String(root.configuredSeconds)
-            options: root.secondsChoices
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onChanged: function(value) { root.applySetting("seconds", Model.boundedInteger(value, 60, Model.minSeconds(), Model.maxSeconds())) }
-          }
-
-          ReplayDropdown {
-            id: audioDropdown
-            width: parent.width
-            label: "Audio"
-            value: root.configuredAudio
-            options: root.audioChoices
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onChanged: function(value) { root.applySetting("audio", Model.normalizeAudio(value)) }
-          }
-
-          ReplayDropdown {
-            id: clipResolutionDropdown
-            width: parent.width
-            label: "Resolution"
-            value: root.configuredClipResolution
-            options: root.clipResolutionChoices
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onChanged: function(value) { root.applySetting("clipResolution", Model.normalizeClipResolution(value)) }
-          }
-
-          ReplayDropdown {
-            id: clipScaleDropdown
-            width: parent.width
-            label: "Layout"
-            value: root.configuredClipScale
-            options: root.clipScaleChoices
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onChanged: function(value) { root.applySetting("clipScale", Model.normalizeClipScale(value)) }
-          }
-
-          Toggle {
-            width: parent.width
-            label: "Cursor"
-            description: "Include the pointer in the Replay Buffer."
-            checked: root.configuredCursor
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.applySetting("cursor", !root.configuredCursor)
-          }
-
-          Button {
-            width: parent.width
-            text: root.hotkeyCopyStatus !== "" ? root.hotkeyCopyStatus : "Copy keybinds"
-            enabled: !root.busy
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.copyHotkeys()
-          }
-        }
-
-        ExtraGroup {
           title: "Encoder"
           open: root.extrasEncoderOpen
           foreground: root.contentForeground
@@ -971,6 +971,12 @@ Panel {
       id: extraBody
       width: parent.width
       spacing: Style.space(8)
+      visible: extra.open
+      height: extra.open ? implicitHeight : 0
+    }
+
+    PanelSeparator {
+      foreground: extra.foreground
       visible: extra.open
       height: extra.open ? implicitHeight : 0
     }
