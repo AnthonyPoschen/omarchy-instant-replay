@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.anthonyposchen.instant-replay",
   "name": "Instant Replay",
-  "version": "0.1.0",
+  "version": "2026.9.9",
   "author": "Anthony Poschen",
   "license": "MIT",
   "description": "Always-on GPU instant replay for Omarchy: buffer a monitor, region, or window and save the last N seconds with a hotkey.",

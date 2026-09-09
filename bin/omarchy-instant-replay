@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROGRAM="omarchy-instant-replay"
 PROCESS_NAME="omarchy-instant-replay-gsr"
-VERSION="0.1.0"
+VERSION="2026.9.9"
 
 HOME="${HOME:?HOME is not set}"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
