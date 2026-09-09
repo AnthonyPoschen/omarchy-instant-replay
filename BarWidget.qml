@@ -28,12 +28,25 @@ BarWidget {
     target.helperPath = root.helperPath
   }
 
+  function panelItem() {
+    return panelLoader.item
+  }
+
+  function panelIsOpen() {
+    var panel = root.panelItem()
+    return !!(panel && panel.opened)
+  }
+
   function showPanel() {
-    if (panelLoader.item) panelLoader.item.open()
+    var panel = root.panelItem()
+    if (panel) panel.open()
   }
 
   function hidePanel() {
-    if (panelLoader.item) panelLoader.item.close()
+    panelOpenTimer.stop()
+    justClosedTimer.restart()
+    var panel = root.panelItem()
+    if (panel) panel.close()
   }
 
   function refreshStatus() {
@@ -66,7 +79,10 @@ BarWidget {
     id: panelOpenTimer
     interval: 100
     repeat: false
-    onTriggered: root.showPanel()
+    onTriggered: {
+      if (justClosedTimer.running) return
+      root.showPanel()
+    }
   }
 
   // KeyboardPanel's dismiss overlay and the bar slot overlay can both see
@@ -77,7 +93,17 @@ BarWidget {
     repeat: false
   }
 
-  onOpenedChanged: if (!root.opened) justClosedTimer.restart()
+  // Read opened off the panel object, not BarWidget.opened: a Loader
+  // ternary binding can stay false after controller.show(), so a second
+  // click kept taking the open path.
+  Connections {
+    target: panelLoader.item
+    function onOpenedChanged() {
+      if (panelLoader.item && panelLoader.item.opened) return
+      panelOpenTimer.stop()
+      justClosedTimer.restart()
+    }
+  }
 
   // Bar overlay left-clicks this. Left toggles Settings. Right saves.
   // Delay the open so KeyboardPanel's Exclusive dismiss overlay does not
@@ -95,8 +121,7 @@ BarWidget {
   }
 
   function togglePanel() {
-    if (root.opened || justClosedTimer.running) {
-      panelOpenTimer.stop()
+    if (root.panelIsOpen() || justClosedTimer.running) {
       root.hidePanel()
       return
     }
