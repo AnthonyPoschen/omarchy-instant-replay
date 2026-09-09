@@ -24,8 +24,8 @@ Needs Omarchy 4 (Quickshell bar) plus `gpu-screen-recorder`, `gsr-cli`, and `ffm
 
 | Action | What it does |
 | --- | --- |
-| Left-click | **Save** a Clip while Live. Start or arm the Replay Buffer when it is off. |
-| Right-click | Open Settings. |
+| Left-click | Open or close Settings. |
+| Right-click | **Save** a Clip while Live. |
 | Middle-click | Refresh status. |
 
 The disc is theme-colored when the buffer is off, red when Live, and three dots while a Clip is encoding.
@@ -33,6 +33,28 @@ The disc is theme-colored when the buffer is off, red when Live, and three dots 
 Clips land in `~/Videos/Replays` (or `$OMARCHY_SCREENRECORD_DIR/Replays`) unless you set a clips folder in Settings.
 
 Save does not stop the Replay Buffer. Fitting the Clip to your canvas can use a lot of CPU. That ffmpeg job runs at nice 19 with idle I/O so a game keeps the cores.
+
+## Set up for games
+
+Follow plus Window audio keeps the Replay Buffer on the game and the Clip on that game's sound, not Discord or the rest of the desktop.
+
+1. Left-click the bar icon.
+2. Set **Mode** to Follow active window.
+3. Set **Audio** to Window audio (or Window + microphone). Desktop audio is the default and records the whole system.
+4. Pick a **Filter**:
+   - **Denylist** — skip chat, browser, and other non-games. Use **Pick window** on each one. The list already includes Omarchy chrome (bar, launcher, lock).
+   - **Allowlist** — only the games you pick. Use **Pick window** on each game. List order is the fallback when none of them is focused.
+5. Turn the switch on in the top-right of Settings with a game focused.
+
+What happens after that:
+
+- The focused window becomes the **Subject** if the Filter allows it, and the buffer goes **Live**.
+- **Denylist** does not scan for “any open game” at start. If Discord is focused when you start, you stay **Armed** until you focus a window that is not on the Blacklist.
+- **Allowlist** can take an already-open listed game even while Discord is focused. The focused allowed window still wins when there is one.
+- Alt-tab to a blocked window does not retarget (**Sticky**). The buffer stays on the game. When the game closes, it **Lingers** on that monitor for one Replay Window, then goes Armed until a matching window returns.
+- Save is cropped to the Subject rectangle. A fullscreen game is the same as the monitor. Window audio is that app's PipeWire stream, not system output.
+
+Pin is simpler if you only ever want one window. Monitor Mode is the whole output and has no Window audio option.
 
 ## Choose a mode
 
@@ -44,21 +66,21 @@ Default. Pins one output: a named connector (`DP-1`, `HDMI-A-1`, …) or whichev
 
 ### Follow active window
 
-Tracks the focused window among those the Filter allows.
+Tracks the focused window among those the Filter allows. Start with the buffer off; left-click arms it, then it goes Live when a matching window is the Subject.
 
 - **All** — any window except built-in Omarchy chrome (bar, launcher, lock). Emptying the Denylist is not the same as All.
-- **Allowlist** — only classes you pick. Order is priority when no allowed window is focused.
-- **Denylist** — skip classes you pick. Ships with Omarchy chrome; you can remove those entries.
+- **Allowlist** — only classes you pick. The focused allowed window is the Subject. If none is focused, the first open match in list order is.
+- **Denylist** — skip classes you pick. Ships with Omarchy chrome; you can remove those entries. Start Live only when the focused window is not on the Blacklist. It does not pick some other open game for you.
 
 The focused allowed window is the **Subject**. Alt-tab to Discord does not retarget (Sticky). An allowed window on another monitor is a **Split**: Save still writes one Clip. A new Subject on the same monitor dumps the current ring and Save stitches those pieces.
 
 If the Subject closes, the buffer **Lingers** on that monitor for one Replay Window, then goes Armed until a matching window returns.
 
-Follow Save is always cropped to the Subject rectangle. A fullscreen Subject is the same as the monitor.
+Follow Save is always cropped to the Subject rectangle. A fullscreen Subject is the same as the monitor. Set Audio to Window audio if the Clip should hear the game and not the rest of the desktop.
 
 ### Pin window
 
-Stays on one window from the picker. A glance at anything else does not retarget. If that window moves to another monitor, that is a Split.
+Stays on one window from the picker. If you Enable with none picked yet, it pins the focused window and goes Live. A glance at anything else does not retarget. If that window moves to another monitor, that is a Split.
 
 ### Region
 
@@ -85,8 +107,8 @@ Save writes one file. There is no trim UI. Further cuts are yours, in your own t
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | Replay Window | 60 seconds | How much follow time Save keeps (15–7200). |
-| Clip resolution | 1080p | Canvas size: 720p, 1080p, 1440p, or 2160p. Not the capture size. |
-| Clip layout | Fit | **Fit** scales the whole picture and adds bars. **Stretch** fills and may distort. **Center** keeps native pixels (bars if smaller, crop if larger). |
+| Resolution | 1080p | Canvas size: 720p, 1080p, 1440p, or 2160p. Not the capture size. |
+| Layout | Fit | **Fit** scales the whole picture and adds bars. **Stretch** fills and may distort. **Center** keeps native pixels (bars if smaller, crop if larger). |
 
 Changing clip resolution or layout does not Split.
 
@@ -131,11 +153,11 @@ Only one KMS screen capture can run at a time. While the buffer is on, `omarchy 
 
 ## Settings
 
-Right-click the bar icon. Mode is chosen first. Encoder knobs sit in a collapsed extras section.
+Left-click the bar icon. Mode is chosen first. Encoder knobs sit in a collapsed extras section.
 
 Match List, Blacklist, and Pin target apply while Live. Mode, Buffer Target, Replay Window, audio, and encoder knobs Split if Live.
 
-The last session (Live, Armed, or Off) is restored when the shell loads. A new install stays off until you start it.
+The last session (Live, Armed, or Off) is restored when the shell loads. A new install starts Enabled. Disable at the bottom of Settings if you want it off; that choice is kept.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |

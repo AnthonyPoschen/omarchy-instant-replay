@@ -28,18 +28,79 @@ BarWidget {
     target.helperPath = root.helperPath
   }
 
-  function open() { if (panelLoader.item) panelLoader.item.open() }
-  function close() { if (panelLoader.item) panelLoader.item.close() }
-  function toggle() { if (panelLoader.item) panelLoader.item.toggle() }
-  function refresh() { if (panelLoader.item) panelLoader.item.refresh() }
-  function save() { if (panelLoader.item) panelLoader.item.save() }
-  function start() { if (panelLoader.item) panelLoader.item.startBuffer() }
-  function stop() { if (panelLoader.item) panelLoader.item.stopBuffer() }
-  function closeForPopoutSwitch() { if (panelLoader.item) panelLoader.item.closeForPopoutSwitch() }
+  function showPanel() {
+    if (panelLoader.item) panelLoader.item.open()
+  }
 
-  function primaryAction() {
-    if (root.running) root.save()
-    else root.start()
+  function hidePanel() {
+    if (panelLoader.item) panelLoader.item.close()
+  }
+
+  function refreshStatus() {
+    if (panelLoader.item) panelLoader.item.refresh()
+  }
+
+  function saveClip() {
+    if (panelLoader.item) panelLoader.item.save()
+  }
+
+  function startBuffer() {
+    if (panelLoader.item) panelLoader.item.startBuffer()
+  }
+
+  function stopBuffer() {
+    if (panelLoader.item) panelLoader.item.stopBuffer()
+  }
+
+  function closeForPopoutSwitch() {
+    if (panelLoader.item) panelLoader.item.closeForPopoutSwitch()
+  }
+
+  // Shape contract for Bar.findPanelWidget. Names must not match IpcHandler
+  // methods — those shadow JS functions on this object, so root.open() never
+  // reached the panel.
+  function open() { root.showPanel() }
+  function close() { root.hidePanel() }
+
+  Timer {
+    id: panelOpenTimer
+    interval: 100
+    repeat: false
+    onTriggered: root.showPanel()
+  }
+
+  // KeyboardPanel's dismiss overlay and the bar slot overlay can both see
+  // the same left-click. Dismiss closes, then this would open again.
+  Timer {
+    id: justClosedTimer
+    interval: 150
+    repeat: false
+  }
+
+  onOpenedChanged: if (!root.opened) justClosedTimer.restart()
+
+  // Bar overlay left-clicks this. Left toggles Settings. Right saves.
+  // Delay the open so KeyboardPanel's Exclusive dismiss overlay does not
+  // eat the same click; close is immediate.
+  function triggerPress(button) {
+    if (button === Qt.MiddleButton) {
+      root.refreshStatus()
+      return
+    }
+    if (button === Qt.RightButton) {
+      root.saveClip()
+      return
+    }
+    root.togglePanel()
+  }
+
+  function togglePanel() {
+    if (root.opened || justClosedTimer.running) {
+      panelOpenTimer.stop()
+      root.hidePanel()
+      return
+    }
+    panelOpenTimer.restart()
   }
 
   onBarChanged: injectPanel()
@@ -58,15 +119,15 @@ BarWidget {
 
   IpcHandler {
     target: "io.github.anthonyposchen.instant-replay"
-    function refresh() { root.broadcast("refresh") }
-    function open() { root.open() }
-    function close() { root.close() }
-    function show() { root.open() }
-    function hide() { root.close() }
-    function toggle() { root.toggle() }
-    function save() { root.broadcast("save") }
-    function start() { root.broadcast("start") }
-    function stop() { root.broadcast("stop") }
+    function refresh() { root.broadcast("refreshStatus") }
+    function open() { root.showPanel() }
+    function close() { root.hidePanel() }
+    function show() { root.showPanel() }
+    function hide() { root.hidePanel() }
+    function toggle() { root.togglePanel() }
+    function save() { root.broadcast("saveClip") }
+    function start() { root.broadcast("startBuffer") }
+    function stop() { root.broadcast("stopBuffer") }
   }
 
   BarIconButton {
@@ -74,7 +135,6 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     iconComponent: replayMark
-    // Loop backup: ReplayMarkLoop. Play backup: ReplayMarkPlay.
     active: root.running || root.savingCount > 0
     useActiveColor: false
     dimmed: !root.running && root.savingCount === 0
@@ -83,18 +143,10 @@ BarWidget {
     slotSize: Style.bar.iconSlot
     tooltipText: root.savingCount > 0
       ? (root.savingCount === 1 ? "Saving clip" : ("Saving " + Math.min(root.savingCount, 99) + " clips"))
-      : (root.running ? "Save replay" : "Start replay buffer")
+      : "Left-click settings · right-click save"
 
     onPressed: function(buttonCode) {
-      if (buttonCode === Qt.MiddleButton) {
-        root.refresh()
-        return
-      }
-      if (buttonCode === Qt.RightButton) {
-        root.toggle()
-        return
-      }
-      root.primaryAction()
+      root.triggerPress(buttonCode)
     }
   }
 
