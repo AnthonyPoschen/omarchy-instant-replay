@@ -1,5 +1,7 @@
 # Instant Replay
 
+![Instant Replay](banner.jpg)
+
 Save a clip of what just happened, even though you never started a recording.
 
 It keeps a rolling buffer of your screen. You save when you want the file. The buffer keeps running. Same idea as NVIDIA ShadowPlay, using the GPU Screen Recorder Omarchy already has. Nothing leaves this machine.
